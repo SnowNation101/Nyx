@@ -155,6 +155,8 @@ class TrainDataset(Dataset):
             return image
 
 
+    import ast
+
     def _extract_images(self, item):
         """Extract image paths from a string or list of strings."""
         images = []
@@ -166,30 +168,35 @@ class TrainDataset(Dataset):
         def is_valid_image(filename):
             return isinstance(filename, str) and filename.lower().endswith(valid_extensions)
 
-        if not item or not isinstance(item, str) or item.strip().lower() == "none":
-            return images  # early return if item is None, "", or "none"
+        if not item or (isinstance(item, str) and item.strip().lower() == "none"):
+            return images 
 
-        item = item.strip()
+        # Case 1: item is already a list
+        if isinstance(item, list):
+            for i in item:
+                if is_valid_image(i):
+                    images.append(i)
+            return images
 
-        try:
-            # Try to parse the string using ast.literal_eval
-            parsed = ast.literal_eval(item)
-            if isinstance(parsed, list):
-                for i in parsed:
-                    if is_valid_image(i):
-                        images.append(i)
-            elif isinstance(parsed, str):
-                if is_valid_image(parsed):
-                    images.append(parsed)
-        except Exception:
-            # If eval fails, treat the string as a single path
-            if is_valid_image(item):
-                images.append(item)
+        # Case 2: item is a string
+        if isinstance(item, str):
+            item = item.strip()
+            try:
+                parsed = ast.literal_eval(item)
+                if isinstance(parsed, list):
+                    for i in parsed:
+                        if is_valid_image(i):
+                            images.append(i)
+                elif isinstance(parsed, str):
+                    if is_valid_image(parsed):
+                        images.append(parsed)
+            except Exception:
+                if is_valid_image(item):
+                    images.append(item)
 
         return images
 
-
-    def _filter_hard_negtives(self, negs, pos, negative_ratio):
+    def _filter_hard_negtives(self, negs, negative_ratio):
         negs = eval(negs)
         if not isinstance(negs, list):
             negs = [negs]
@@ -217,8 +224,8 @@ class TrainDataset(Dataset):
             neg_text_list, neg_image_path_list = (
                 self.train_data[item]["neg_text"], self.train_data[item]["neg_image_path"],
             )
-            neg_texts = self._filter_hard_negtives(neg_text_list, pos_text, self.negative_ratio)
-            neg_image_paths = self._filter_hard_negtives(neg_image_path_list, pos_image_path, self.negative_ratio)
+            neg_texts = self._filter_hard_negtives(neg_text_list, self.negative_ratio)
+            neg_image_paths = self._filter_hard_negtives(neg_image_path_list, self.negative_ratio)
 
         for ind, neg in enumerate(neg_texts):
             if neg == '':
@@ -239,8 +246,9 @@ class TrainDataset(Dataset):
             for ind, neg in enumerate(neg_texts):
                 neg_texts[ind] = neg.replace(PHI_IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
 
-        for neg_img in neg_image_paths:
-            neg_images.append(self._get_image(neg_img))
+        for neg_img_path in neg_image_paths:
+            extracted_paths = self._extract_images(neg_img_path)
+            neg_images.extend([self._get_image(img_path) for img_path in extracted_paths])
 
         ret = (qry_text, qry_images,
                 pos_text, pos_images,
