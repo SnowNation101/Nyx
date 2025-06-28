@@ -177,17 +177,12 @@ swanlog/
 
 draw_figure.ipynb
 
-<<<<<<< HEAD
-*.json
-*.faiss
-=======
 # all data files except deepspeed configuration
 *.json
 !ds_config.json
 
 *.faiss
 
->>>>>>> dev-train
 
 # My testing files...
 t.ipynb

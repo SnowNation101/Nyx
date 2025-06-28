@@ -78,7 +78,10 @@ class MMEBModel(nn.Module):
     def build(cls, model_args: ModelArguments, training_args: TrainingArguments, **hf_kwargs):
         # Loading the base model
         force_download = dist.get_world_size() != 1
-        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True, force_download=force_download)
+        config = AutoConfig.from_pretrained(
+            model_args.model_name, 
+            trust_remote_code=True,
+            force_download=force_download)
         if hasattr(config, 'use_cache'):
             config.use_cache = False
         elif hasattr(config, 'text_config'):

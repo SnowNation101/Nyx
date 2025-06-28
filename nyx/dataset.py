@@ -22,6 +22,8 @@ PHI_IMAGE_TOKEN = "<|image_1|>"
 LLAVA_IMAGE_TOKEN = "<image>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
+qwen_min_pixels = 4 * 28 * 28
+qwen_max_pixels = 1280 * 28 * 28
 
 class TrainDataset(Dataset):
 
@@ -140,17 +142,17 @@ class TrainDataset(Dataset):
         image = Image.open(full_img_path)
         if self.model_args.model_backbone == "mllama":
             if image.size[1] == 1:
-                # print(f"Failed Image: {image}.")
                 image = image.resize((image.size[0], 2))
         elif self.model_args.model_backbone == "llava_next":
             return self._process_image(image, "high")
         elif self.model_args.model_backbone == "qwen2_5_vl":
-            # new_h, new_w = smart_resize(image.height, image.width)
-            # return image.resize((new_w, new_h))
-            # Make a seudo message for processing_vision_info
-            pseudo_message = [{"content": [{"type": "image", "image": image}]}]
+            pseudo_message = [{"content": [{
+                "type": "image", 
+                "image": image,
+                "min_pixels": qwen_min_pixels,
+                "max_pixels": qwen_max_pixels,}]}]
             images, _ = process_vision_info(pseudo_message)
-            return images[0]
+            return images[0] # Make sure return a single image not a list
         else:
             return image
 
