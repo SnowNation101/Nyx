@@ -70,8 +70,11 @@ deepspeed --include localhost:2,3,4,5 --master_port 12345 train.py \
   --subset_name TAT-DQA ArxivQA InfoSeek_it2t InfoSeek_it2it ImageNet_1K N24News HatefulMemes SUN397 VOC2007 InfographicsVQA ChartQA A-OKVQA DocVQA OK-VQA Visual7W VisDial CIRR NIGHTS WebQA VisualNews_i2t VisualNews_t2i MSCOCO_i2t MSCOCO_t2i MSCOCO \
   --t2t_dataset_name "/fs/archive/share/mm_datasets/Nyx-T2T-Data" \
   --t2t_subset_name 2wikimultihopqa hotpotqa musique \
+  --synthetic_dataset_name "/fs/archive/share/mm_datasets/Nyx-mmE5-Synthetic" \
+  --synthetic_subset_name Retrieval VQA \
+  --mm_dataset_path "process_obelics/mm_dataset.json" \
   --model_name "${MODEL_NAME_OR_PATH}" --bf16 --pooling last \
-  --num_sample_per_subset 50000 \
+  --num_sample_per_subset 5000 \
   --dataloader_num_workers 4 \
   --gradient_checkpointing True \
   --num_train_epochs 1 \
@@ -83,6 +86,6 @@ deepspeed --include localhost:2,3,4,5 --master_port 12345 train.py \
   --model_backbone "${MODEL_BACKBONE}" \
   --processor_name "${PROCESSOR_NAME}" \
   --resume_from_checkpoint "${OUTPUT_DIR}" \
-  --per_device_train_batch_size 8 --gradient_accumulation_steps 8 \
-  --negative_ratio 2 \
+  --per_device_train_batch_size 16 --gradient_accumulation_steps 8 \
+  --negative_ratio 1 \
   --report_to swanlab

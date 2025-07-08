@@ -1,5 +1,7 @@
 import torch
 import torch.distributed as dist
+import random
+import torch.nn.functional as F
 
 from typing import Dict, Optional
 from torch import nn, Tensor
@@ -40,6 +42,13 @@ class MMEBModel(nn.Module):
         self.is_ddp = dist.is_initialized()
         self.training_args = training_args
         self.model_args = model_args
+
+        self.use_mrl = True
+        self.matryoshka_dims = [2048, 1024, 512, 256]
+        self.matryoshka_weights = [1, 1, 0.2, 0.2]
+        self.n_dims_per_step = -1
+
+
         print(f"DDP: {self.is_ddp}")
         if self.is_ddp:
             self.process_rank = dist.get_rank()
@@ -64,7 +73,7 @@ class MMEBModel(nn.Module):
         else:
             raise NotImplementedError
         if self.normalize:
-            reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
+            reps = F.normalize(reps, p=2, dim=-1)
         return reps
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs: Optional[Dict] = None):
@@ -229,37 +238,112 @@ class MMEBModel(nn.Module):
     def save(self, output_dir: str):
         self.encoder.save_pretrained(output_dir)
 
-    def forward(self, qry: Dict[str, Tensor] = None, tgt: Dict[str, Tensor] = None, neg: Dict[str, Tensor] = None):
-        qry_reps = self.encode_inputs(qry) if qry else None # (bsz_per_device, dim)
-        tgt_reps = self.encode_inputs(tgt) if tgt else None # (bsz_per_device, dim)
-        neg_reps = self.encode_inputs(neg) if neg else None # (bsz_per_device * negative_ratio, dim)
+    def _shrink(self, tensor: Tensor, dim: int) -> Tensor:
+        tensor_dim = tensor.shape[-1]
+        if dim > tensor_dim:
+            raise ValueError(
+                f"Dimension {dim} in matryoshka_dims cannot exceed embedding dim {tensor_dim}"
+            )
+        return F.normalize(tensor[..., :dim], p=2, dim=-1)
+
+    def forward(
+        self,
+        qry: Dict[str, Tensor] = None,
+        tgt: Dict[str, Tensor] = None,
+        neg: Dict[str, Tensor] = None
+    ):
+        """
+        Forward function for contrastive learning with optional Matryoshka Representation Learning (MRL).
+
+        Args:
+            qry (Dict[str, Tensor]): Query input features.
+            tgt (Dict[str, Tensor]): Target (positive) input features.
+            neg (Dict[str, Tensor], optional): Negative input features.
+
+        Returns:
+            loss (Tensor): Computed contrastive loss.
+        """
+        
+
+        # Encode inputs into dense representations
+        qry_reps = self.encode_inputs(qry) if qry else None
+        tgt_reps = self.encode_inputs(tgt) if tgt else None
+        neg_reps = self.encode_inputs(neg) if neg else None
+
         if qry_reps is None or tgt_reps is None:
             return {"qry_reps": qry_reps, "tgt_reps": tgt_reps}
 
+        # Gather tensors across devices (if using DistributedDataParallel)
         if self.is_ddp:
-            all_qry_reps = self._dist_gather_tensor(qry_reps)
-            all_tgt_reps = self._dist_gather_tensor(tgt_reps)
-            all_neg_reps = self._dist_gather_tensor(neg_reps) if neg else None 
-        else:
-            all_qry_reps = qry_reps
-            all_tgt_reps = tgt_reps
-            all_neg_reps = neg_reps
+            qry_reps = self._dist_gather_tensor(qry_reps)
+            tgt_reps = self._dist_gather_tensor(tgt_reps)
+            neg_reps = self._dist_gather_tensor(neg_reps) if neg_reps is not None else None
 
-        pos_scores = self.compute_similarity(all_qry_reps, all_tgt_reps)
-        pos_scores = pos_scores.view(all_qry_reps.size(0), -1)
+        # ---------- Matryoshka Representation Learning ----------
+        if getattr(self, "use_mrl", False):
+            dims = getattr(self, "matryoshka_dims", [])
+            weights = getattr(self, "matryoshka_weights", None)
+            n_dims_per_step = getattr(self, "n_dims_per_step", -1)
+
+            if weights is None:
+                weights = [1.0] * len(dims)
+
+            if len(weights) != len(dims):
+                raise ValueError("Length of matryoshka_weights must match matryoshka_dims.")
+
+            dim_indices = range(len(dims))
+            if 0 < n_dims_per_step < len(dims):
+                dim_indices = sorted(random.sample(dim_indices, n_dims_per_step))
+
+            total_loss = 0.0
+
+            for idx in dim_indices:
+                dim = dims[idx]
+                weight = weights[idx]
+
+                qry_slice = self._shrink(qry_reps, dim)
+                tgt_slice = self._shrink(tgt_reps, dim)
+                neg_slice = self._shrink(neg_reps, dim) if neg_reps is not None else None
+
+                # Positive pair scores
+                pos_scores = self.compute_similarity(qry_slice, tgt_slice)
+                pos_scores = pos_scores.view(qry_slice.size(0), -1)
+                scores = pos_scores.clone()
+
+                # Negative scores
+                if neg_slice is not None:
+                    batch_size = qry_slice.size(0)
+                    neg_ratio = int(neg_slice.shape[0] / batch_size)
+                    neg_scores = torch.sum(
+                        qry_slice.unsqueeze(1) * neg_slice.view(batch_size, neg_ratio, -1), dim=-1
+                    )
+                    scores = torch.cat([pos_scores, neg_scores], dim=1)
+
+                # Compute target and loss
+                target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
+                target = target * (qry_slice.size(0) // tgt_slice.size(0))
+                slice_loss = self.cross_entropy(scores / self.temperature, target)
+                total_loss += weight * slice_loss
+                
+            return total_loss
+
+        # ---------- Standard Contrastive Learning ----------
+        pos_scores = self.compute_similarity(qry_reps, tgt_reps)
+        pos_scores = pos_scores.view(qry_reps.size(0), -1)
         scores = pos_scores.clone()
 
-        batch_size = len(all_qry_reps)
-        if neg is not None:
-            neg_ratio = int(all_neg_reps.shape[0] / all_qry_reps.shape[0])
-            neg_scores = torch.sum(all_qry_reps.unsqueeze(1) * all_neg_reps.view(batch_size, neg_ratio, -1), dim = -1) # B * neg_ratio
-            scores = torch.cat([pos_scores, neg_scores], dim = 1)
-            
-        target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
-        target = target * (all_qry_reps.size(0) // all_tgt_reps.size(0))
-        loss = self.cross_entropy(scores / self.temperature, target)
+        if neg_reps is not None:
+            batch_size = qry_reps.size(0)
+            neg_ratio = int(neg_reps.shape[0] / batch_size)
+            neg_scores = torch.sum(
+                qry_reps.unsqueeze(1) * neg_reps.view(batch_size, neg_ratio, -1), dim=-1
+            )
+            scores = torch.cat([pos_scores, neg_scores], dim=1)
 
-        return loss
+        target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
+        target = target * (qry_reps.size(0) // tgt_reps.size(0))
+        return self.cross_entropy(scores / self.temperature, target)
+
 
     def _dist_gather_tensor(self, t: Tensor):
         t = t.contiguous()

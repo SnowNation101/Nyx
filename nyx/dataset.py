@@ -20,6 +20,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 IMAGE_TOKEN = "<|image|>"
 PHI_IMAGE_TOKEN = "<|image_1|>"
 LLAVA_IMAGE_TOKEN = "<image>"
+MLLAMA_IMAGE_TOKEN = "<|image|>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 qwen_min_pixels = 4 * 28 * 28
