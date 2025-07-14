@@ -179,6 +179,7 @@ draw_figure.ipynb
 
 # all data files except deepspeed configuration
 *.json
+*.gz
 !ds_config.json
 
 *.faiss
@@ -193,3 +194,4 @@ test.py
 try.py
 try_load.py
 test_new.py
+load_nyx.py

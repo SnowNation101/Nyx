@@ -88,7 +88,7 @@ class MMEBModel(nn.Module):
         # Loading the base model
         force_download = dist.get_world_size() != 1
         config = AutoConfig.from_pretrained(
-            model_args.model_name, 
+            model_args.model_name,
             trust_remote_code=True,
             force_download=force_download)
         if hasattr(config, 'use_cache'):

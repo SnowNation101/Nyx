@@ -24,7 +24,7 @@ MLLAMA_IMAGE_TOKEN = "<|image|>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 qwen_min_pixels = 4 * 28 * 28
-qwen_max_pixels = 1280 * 28 * 28
+qwen_max_pixels = 640 * 28 * 28
 
 class TrainDataset(Dataset):
 
@@ -93,15 +93,23 @@ class TrainDataset(Dataset):
                         fn_kwargs={"column_names": column_names}
                     )
                 train_data.append(subset_data)
+        # mixed modal datasets
         if self.data_args.mm_dataset_path:
-            import json
-            from datasets import Dataset
             print("Loading mixed modal datasets")
             with open(self.data_args.mm_dataset_path, "r") as f:
                 mm_data = json.load(f)
             if len(mm_data) > self.data_args.num_sample_per_subset and self.data_args.num_sample_per_subset != -1:
                 mm_data = mm_data[:self.data_args.num_sample_per_subset]
-            mm_data = Dataset.from_list(mm_data)
+            # Process image path and images token
+            for item in mm_data:
+                item["qry"] = item["qry"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
+                item["pos_text"] = item["pos_text"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
+                item["neg_text"] = [text.replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN) for text in item["neg_text"]]
+                item["qry_image_path"] = ["images/NyxQA/" + img for img in item["qry_image_path"]]
+                item["pos_image_path"] = ["images/NyxQA/" + img for img in item["pos_image_path"]]
+                item["neg_image_path"] = [["images/NyxQA/" + img for img in img_list] for img_list in item["neg_image_path"]]
+            
+            mm_data = datasets.Dataset.from_list(mm_data)
             # Convert all fields to string
             column_names = mm_data.column_names
             mm_data = mm_data.map(
@@ -156,9 +164,6 @@ class TrainDataset(Dataset):
             return images[0] # Make sure return a single image not a list
         else:
             return image
-
-
-    import ast
 
     def _extract_images(self, item):
         """Extract image paths from a string or list of strings."""

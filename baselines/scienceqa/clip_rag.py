@@ -1,0 +1,268 @@
+import torch
+import json
+import os
+import numpy as np
+import faiss
+from tqdm import tqdm
+from collections import Counter
+import re
+import string
+from PIL import Image
+
+from generator import MMGenerator
+from transformers import CLIPProcessor, CLIPModel
+
+# ===========configuration===========
+model_name = "/fs/archive/share/clip-vit-base-patch32"
+data_dir = "/fs/archive/share/mm_datasets/ScienceQA"
+
+lecture_path = "scienceqa_lecture_corpus.json"
+example_qa_path = "scienceqa_example_qa_corpus.json"
+
+retrieved_dir = "retrieved/clip"
+generated_dir = "generated/clip"
+index_dir = "index"
+retrieved_top_k = 10
+generate_top_k_lec = 1
+generate_top_k_qa = 2
+
+os.makedirs(retrieved_dir, exist_ok=True)
+os.makedirs(generated_dir, exist_ok=True)
+os.makedirs(index_dir, exist_ok=True)
+
+with open(os.path.join(data_dir, "problems.json"), "r") as f:
+    problems = json.load(f)
+with open(os.path.join(data_dir, "pid_splits.json"), "r") as f:
+    pid_splits = json.load(f)
+
+train_pids = pid_splits['train']
+val_pids = pid_splits['val']
+test_pids = pid_splits['test']
+
+# ===========embedding===========
+
+model = CLIPModel.from_pretrained(model_name).to("cuda")
+model.eval()
+processor = CLIPProcessor.from_pretrained(model_name)
+
+with open(lecture_path, "r") as f:
+    lecture_corpus = json.load(f)
+with open(example_qa_path, "r") as f:
+    example_qa_corpus = json.load(f)
+
+# Indexing lectures
+if not os.path.exists(f"{index_dir}/clip_lecture.faiss"):
+    embeddings = []
+    for item in tqdm(lecture_corpus, desc="Indexing lectures"):
+        text = item
+        text_inputs = processor(
+            text=text, 
+            return_tensors="pt",
+            truncation=True,
+        ).to("cuda")
+        with torch.no_grad():
+            text_outputs = model.get_text_features(**text_inputs)
+        embeddings.append(text_outputs.float().cpu().numpy())
+    embeddings = np.vstack(embeddings).astype("float32")
+    lecture_index = faiss.IndexFlatIP(embeddings.shape[1])
+    lecture_index.add(embeddings)
+    faiss.write_index(lecture_index, f"{index_dir}/clip_lecture.faiss")
+else:
+    lecture_index = faiss.read_index(f"{index_dir}/clip_lecture.faiss")
+
+# Indexing example QAs
+if not os.path.exists(f"{index_dir}/clip_example_qa.faiss"):
+    embeddings = []
+    for item in tqdm(example_qa_corpus, desc="Indexing example QAs"):
+        text = item['text'].replace("\n<|image|>", "")
+        text_inputs = processor(
+            text=text, 
+            return_tensors="pt",
+            truncation=True,
+        ).to("cuda")
+        if item['image']:
+            image = Image.open(os.path.join(data_dir, "images", item['image'])).convert("RGBA")
+            # Ensure the image dimensions are at least 4x4
+            image = image.resize((max(image.width, 4), max(image.height, 4)))
+            images = [image]
+            images_inputs = processor(
+                images=[image], 
+                return_tensors="pt",
+                truncation=True,
+            ).to("cuda")
+        else:
+            images_inputs = None
+
+        with torch.no_grad():
+            text_outputs = model.get_text_features(**text_inputs)
+            if images_inputs:
+                image_outputs = model.get_image_features(**images_inputs)
+                outputs = (text_outputs + image_outputs) / 2
+            else:
+                outputs = text_outputs
+            embeddings.append(outputs.float().cpu().numpy())
+    embeddings = np.vstack(embeddings).astype("float32")
+    example_qa_index = faiss.IndexFlatIP(embeddings.shape[1])
+    example_qa_index.add(embeddings)
+    faiss.write_index(example_qa_index, f"{index_dir}/clip_example_qa.faiss")
+else:
+    example_qa_index = faiss.read_index(f"{index_dir}/clip_example_qa.faiss")
+
+# ===========retrieving===========
+
+def retrieve(index, corpus, text, images=None, top_k=10):
+    text_inputs = processor(
+        text=text, 
+        return_tensors="pt",
+        truncation=True,
+    ).to("cuda")
+    
+    with torch.no_grad():
+        text_outputs = model.get_text_features(**text_inputs).float().cpu().numpy()
+    
+    if images:
+        images_inputs = processor(
+            images=images, 
+            return_tensors="pt",
+            truncation=True,
+        ).to("cuda")
+        with torch.no_grad():
+            image_outputs = model.get_image_features(**images_inputs).float().cpu().numpy()
+        query_embedding = (text_outputs + image_outputs) / 2
+    else:
+        query_embedding = text_outputs
+
+    _, I = index.search(query_embedding, top_k)
+    retrieved_docs = [corpus[i] for i in I[0]]
+    return retrieved_docs
+
+retrieved = []
+for pid in tqdm(test_pids, desc="Retrieving test set"):
+    item = problems[pid]
+    question = item['question']
+    choices = item['choices']
+    image = item['image']
+
+    if image:
+        image_path = f"{data_dir}/images/test/{pid}/{image}"
+        images = [Image.open(image_path).convert("RGBA")]
+    else:
+        images = None
+
+    question = f"Question: {question}\nChoices: {', '.join(choices)}"
+
+    # retrieve lectures
+    text = "Please retrieve the most relevant lecture to answer the question:\n" + question
+    lectures = retrieve(
+        index=lecture_index,
+        corpus=lecture_corpus,
+        text=text,
+        images=images,
+        top_k=retrieved_top_k
+    )
+
+    text = "Please retrieve the most relevant example Q&A to answer the question:\n" + question
+    example_qas = retrieve(
+        index=example_qa_index,
+        corpus=example_qa_corpus,
+        text=text,
+        images=images,
+        top_k=retrieved_top_k
+    )
+
+    item['pid'] = pid
+    item['retrieved_lecture'] = lectures
+    item['retrieved_example_qa'] = example_qas
+
+    retrieved.append(item)
+
+with open(os.path.join(retrieved_dir, "test_retrieved_docs.json"), "w") as f:
+    json.dump(retrieved, f, indent=2, ensure_ascii=False)
+print(f"Saved: {retrieved_dir}/test_retrieved_docs.json")
+
+del model, processor
+torch.cuda.empty_cache()
+torch.cuda.ipc_collect()
+    
+
+# ===========generating===========
+with open(os.path.join(retrieved_dir, "test_retrieved_docs.json"), "r") as f:
+    retrieved = json.load(f)
+
+vlm = MMGenerator(model_path="/fs/archive/share/Qwen2.5-VL-7B-Instruct")
+
+genereted = []
+for item in tqdm(retrieved, desc="Generating answers for test set"):
+    question = item["question"]
+    choices = item["choices"]
+    question = f"Question: {question}\nChoices: {', '.join(choices)}\nAnswer:"
+    
+    retrieved_lecture = item["retrieved_lecture"]
+    retrieved_example_qa = item["retrieved_example_qa"]
+
+    lectures = []
+    for lecture in retrieved_lecture[:generate_top_k_lec]:
+        lectures.append(f"Lecture: {lecture}")
+
+    example_qas = []
+    for example_qa in retrieved_example_qa[:generate_top_k_qa]:
+        example_qas.append(example_qa['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>"))
+
+    docs = lectures + example_qas
+
+    question_image = item['image']
+    if question_image:
+        question_image = Image.open(f"/fs/archive/share/mm_datasets/ScienceQA/images/test/{item['pid']}/{question_image}")
+        question = "<|vision_start|><|image_pad|><|vision_end|>" + question
+    images = []
+    images += [Image.open(os.path.join(data_dir, "images", doc['image'])) for doc in retrieved_example_qa[:generate_top_k_qa] if doc['image']]
+    images = images.append(question_image) if question_image else images
+    images = images if images else None
+    
+    # Generate the answer using the MMGenerator
+    answer = vlm.generate(
+        docs=docs,
+        images=images,
+        question=question,
+    )
+    
+    item["generated_answer"] = answer
+    genereted.append(item)
+
+with open(os.path.join(generated_dir, "test_generated_answers.json"), "w") as f:
+    json.dump(genereted, f, indent=2, ensure_ascii=False)
+print(f"Generated answers saved to {generated_dir}/test_generated_answers.json")
+
+# ============evaluation============
+
+with open(f"{generated_dir}/test_generated_answers.json", "r") as f:
+    dataset = json.load(f)
+
+total_acc = 0
+count = 0
+for item in dataset:
+    pred = item["generated_answer"].strip()
+    true = item['choices'][item["answer"]]
+    
+    # Normalize answers
+    def normalize_answer(s):
+        def remove_articles(text):
+            return re.sub(r'\b(a|an|the)\b', ' ', text)
+        def remove_punc(text):
+            return ''.join(ch for ch in text if ch not in string.punctuation)
+        def white_space_fix(text):
+            return ' '.join(text.split())
+        def lower(text):
+            return str(text).lower()
+        return white_space_fix(remove_articles(remove_punc(lower(s))))
+    
+    pred_norm = normalize_answer(pred)
+    true_norm = normalize_answer(true)
+
+    if pred_norm == true_norm:
+        total_acc += 1
+    count += 1
+
+avg_acc = total_acc / count
+print(f"\nEvaluation:")
+print(f"  Accuracy: {avg_acc:.4f}")
