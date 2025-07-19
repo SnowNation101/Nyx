@@ -1,24 +1,32 @@
-from datasets import load_dataset
+import json
+import torch
 import json
 import os
-import torch
+import numpy as np
+import faiss
 from tqdm import tqdm
+from collections import Counter
 import re
 import string
 
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
 from qwen_vl_utils import process_vision_info
+from PIL import Image
 
+IMAGE_TOKEN = "<|image|>"
+QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
+# ==============configurations================
 generated_dir = "generated/qwenvl_da"
 os.makedirs(generated_dir, exist_ok=True)
 
-dataset_dir = "/fs/archive/share/mm_datasets/ScienceQA"
-test_data = load_dataset(
-    dataset_dir,
-    split="test",
-)
+dataset_dir = "../../construct_nyxqa/NyxQA"
+image_dir = "/fs/archive/share/mm_datasets/NyxQA/images"
 
+# ===============generation================
+
+with open(os.path.join(dataset_dir, "test.json"), "r") as f:
+    test_data = json.load(f)
 
 model_path = "/fs/archive/share/Qwen2.5-VL-7B-Instruct"
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -27,47 +35,46 @@ model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     attn_implementation="flash_attention_2",
     device_map="auto",
 )
-processor = AutoProcessor.from_pretrained(model_path, use_fast=True)
-
+processor = Qwen2_5_VLProcessor.from_pretrained(model_path, use_fast=True)
 
 results = []
 for item in tqdm(test_data, desc="Generating answers for test"):
-    question = item["question"]
-    choices = item["choices"]
-    prompt = f"Question: {question}\nChoices: {', '.join(choices)}"
+    question = item['qry']
+    choices = item['choices']
+    images = item['pos_image_path'] + item['qry_image_path']
+    doc = item['pos_text']
 
-    user_content = (
-        [{"type": "image", "image": item['image']}] + [{"type": "text", "text": prompt}]
-        if item.get('image')
-        else [{"type": "text", "text": prompt}]
-    )
+    prompt = f"{doc}\nQuestion: {question}\nChoices: {', '.join(choices)}"
+    prompt = prompt.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
 
     messages = [
         {
             "role": "system",
-            "content": "Answer the mulitple-choice question. Only give me the answer and do not output any other words."
+            "content": "Answer the multiple-choice question. Only give me the answer and do not output any other words."
         },
         {
             "role": "user",
-            "content": user_content
+            "content": prompt
         }
     ]
 
     prompt = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    
-    image_inputs, _ = process_vision_info(messages)
+
+
+    image_inputs, _ = process_vision_info(messages) if images else (None, None)
 
     inputs = processor(
         text=prompt,
         images=image_inputs,
         return_tensors="pt",
-        padding=True,
+        padding=True
     ).to(model.device)
+
     generated_ids = model.generate(
         **inputs,
-        max_new_tokens=512,
+        max_new_tokens=128,
         do_sample=True,
         temperature=0.7,
         top_p=0.9,
@@ -78,31 +85,30 @@ for item in tqdm(test_data, desc="Generating answers for test"):
     output_text = processor.batch_decode(
         generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )[0]
-
-    item['generated_answer'] = output_text
-
+    
     results.append({
         "question": question,
         "choices": choices,
-        "answer": choices[item['answer']],
+        "images": images,
+        "answer": choices[item['right_choice']],
         "generated_answer": output_text
     })
 
-with open(f"{generated_dir}/test_generated_answers.json", "w") as f:
-    json.dump(results, f, indent=2, ensure_ascii=False)
-print(f"Generated answers saved to {generated_dir}/test_generated_answers.json")
+with open(f"{generated_dir}/test_generated_answers_oracle.json", "w") as f:
+    json.dump(results, f, indent=2, ensure_ascii=True)
+print(f"Generated answers saved to {generated_dir}/test_generated_answers_oracle.json")
 
-# =============evaluation============
+# ==============evaluation================
 
-with open(f"{generated_dir}/test_generated_answers.json", "r") as f:
-    dataset = json.load(f)
+with open(os.path.join(generated_dir, "test_generated_answers_oracle.json"), "r") as f:
+    generated_answers = json.load(f)
 
 total_acc = 0
 count = 0
-for item in dataset:
+for item in generated_answers:
     pred = item["generated_answer"].strip()
     true = item["answer"]
-    
+
     # Normalize answers
     def normalize_answer(s):
         def remove_articles(text):

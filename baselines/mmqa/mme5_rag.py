@@ -37,8 +37,7 @@ def last_pooling(last_hidden_state, attention_mask, normalize=True):
         reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
     return reps
 
-processor = AutoProcessor.from_pretrained(
-    model_name)
+processor = AutoProcessor.from_pretrained(model_name)
 model = MllamaForConditionalGeneration.from_pretrained(
     model_name, torch_dtype=torch.bfloat16
 ).to("cuda")

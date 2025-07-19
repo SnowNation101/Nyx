@@ -34,7 +34,7 @@ for item in tqdm(corpus, desc="Processing corpus"):
             {"role": "system", "content": "You are a professional assistant specialized in visual understanding."},
             {"role": "user", "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Please describe this image in detail, including the scene, objects, and any notable attributes."}
+                {"type": "text", "text": "Please describe the image."}
             ]}
         ]
 
