@@ -119,5 +119,10 @@ for item in tqdm(train_data, desc="retrieving hard negs"):
     item["neg_text"] = neg_text[:5]
     item["neg_image_path"] = neg_image_path[:5]
 
+for item in train_data:
+    item["qry_image_path"] = ["images/NyxQA/" + img for img in item["qry_image_path"]]
+    item["pos_image_path"] = ["images/NyxQA/" + img for img in item["pos_image_path"]]
+    item["neg_image_path"] = [["images/NyxQA/" + img for img in img_list] for img_list in item["neg_image_path"]]
+
 with open("NyxQA/train_hardneg.json", "w") as f:
     json.dump(train_data, f, ensure_ascii=True, indent=2)

@@ -105,9 +105,6 @@ class TrainDataset(Dataset):
                 item["qry"] = item["qry"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
                 item["pos_text"] = item["pos_text"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
                 item["neg_text"] = [text.replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN) for text in item["neg_text"]]
-                item["qry_image_path"] = ["images/NyxQA/" + img for img in item["qry_image_path"]]
-                item["pos_image_path"] = ["images/NyxQA/" + img for img in item["pos_image_path"]]
-                item["neg_image_path"] = [["images/NyxQA/" + img for img in img_list] for img_list in item["neg_image_path"]]
             
             mm_data = datasets.Dataset.from_list(mm_data)
             # Convert all fields to string

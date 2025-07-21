@@ -6,7 +6,10 @@ import faiss
 from tqdm import tqdm
 from PIL import Image
 from datasets import load_dataset
-from vllm import LLM, SamplingParams
+from collections import Counter
+import re
+import string
+
 
 from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
 from qwen_vl_utils import process_vision_info
@@ -16,10 +19,14 @@ QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 retrieve_top_k = 30
 
+n_negs = 3
+
 retrieval_dir = "outputs/retrieval"
 os.makedirs(retrieval_dir, exist_ok=True)
 generation_dir = "outputs/generation"
 os.makedirs(generation_dir, exist_ok=True)
+feedback_dir = "outputs/feedback"
+os.makedirs(feedback_dir, exist_ok=True)
 
 def process_images(images):
     if not images:
@@ -190,6 +197,8 @@ def retrieval():
 
 # ===============GENERATION================
 def generation():
+    from vllm import LLM, SamplingParams
+
     model_path = "/fs/archive/share/Qwen2.5-VL-7B-Instruct"
     processor = Qwen2_5_VLProcessor.from_pretrained(model_path, use_fast=True)
 
@@ -538,14 +547,321 @@ def generation():
     with open(os.path.join(generation_dir, "nyxqa_generation.json"), "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"Generated responses for NyxQA saved to {generation_dir}/nyxqa_generation.json")
+
+
+def normalize_answer(s):
+        def remove_articles(text):
+            return re.sub(r'\b(a|an|the)\b', ' ', text)
+        
+        def remove_punc(text):
+            return ''.join(ch for ch in text if ch not in string.punctuation)
+        
+        def white_space_fix(text):
+            return ' '.join(text.split())
+        
+        def lower(text):
+            return text.lower()
+        
+        return white_space_fix(remove_articles(remove_punc(lower(str(s)))))
+
+
+def compute_f1(a_pred, a_true):
     
 
-def feedback():
-    for subset in ["hotpotqa", "2wikimultihopqa", "musique"]:
-        
+    pred_tokens = normalize_answer(a_pred).split()
+    true_tokens = normalize_answer(a_true).split()
+    common = Counter(pred_tokens) & Counter(true_tokens)
+    num_same = sum(common.values())
 
+    if len(pred_tokens) == 0 or len(true_tokens) == 0:
+        return int(pred_tokens == true_tokens)
+    if num_same == 0:
+        return 0
+    
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(true_tokens)
+    f1 = 2 * precision * recall / (precision + recall)
+    return f1
+
+
+def feedback():
+    # 1. Text-only
+    for subset in ["hotpotqa", "2wikimultihopqa", "musique"]:
+        dataset = json.load(open(os.path.join(generation_dir, f"{subset}_generation.json"), "r"))
+        print(f"Processing feedback for {subset}...")
+
+        feedback_dataset = []
+
+        for item in tqdm(dataset, desc=f"Processing {subset}"):
+            answers = item["answer"]
+            responses = item["responses"]
+            scores = []
+
+            for response in responses:
+                pred = response["response"]
+                score = max(compute_f1(pred, ans) for ans in answers)
+                scores.append(score)
+
+            max_score = max(scores)
+            
+            # Initialize lists for positive and negative samples
+            best_response_doc = None
+            negative_responses_docs = []
+            
+            # Track indices of responses already added (either best or negative)
+            added_indices = set()
+
+            if max_score > 0:
+                # Find the first best response
+                max_index = scores.index(max_score)
+                best_response_doc = responses[max_index]['docs'][0]
+                added_indices.add(max_index)
+
+                # Collect up to 3 negative responses
+                neg_count = 0
+                for i, score in enumerate(scores):
+                    if neg_count >= n_negs: # Stop after collecting enough negatives
+                        break
+                    if i not in added_indices: # Ensure it's not the best response and not already added
+                        negative_responses_docs.append(responses[i]['docs'][0])
+                        added_indices.add(i) # Mark as added to avoid duplicates if more logic were added
+                        neg_count += 1
+                
+                feedback_entry = {
+                    "qry": item["qry"],
+                    "qry_image_path": [],
+                    "pos_text": best_response_doc['text'],
+                    "pos_image_path": best_response_doc['images'],
+                    "neg_text": [neg_doc['text'] for neg_doc in negative_responses_docs],
+                    "neg_image_path": [neg_doc['images'] for neg_doc in negative_responses_docs],
+                    "score": max_score,
+                }
+                feedback_dataset.append(feedback_entry)
+
+        print(f"Feedback dataset size: {len(feedback_dataset)}")
+        with open(os.path.join(feedback_dir, f"{subset}_feedback.json"), "w", encoding="utf-8") as f:
+            json.dump(feedback_dataset, f, indent=2, ensure_ascii=False)
+
+
+    # 2. MMQA
+    dataset = json.load(open(os.path.join(generation_dir, "mmqa_generation.json"), "r"))
+    print("Processing feedback for MMQA...")
+
+    feedback_dataset = []
+
+    for item in tqdm(dataset, desc="Processing MMQA"):
+        answers = item["answer"]
+        responses = item["responses"]
+        scores = []
+
+        for response in responses:
+            pred = response["response"]
+            score = max(compute_f1(pred, ans) for ans in answers)
+            scores.append(score)
+
+        max_score = max(scores)
+
+        # Initialize lists for positive and negative samples
+        best_response_doc = None
+        negative_responses_docs = []
+
+        # Track indices of responses already added (either best or negative)
+        added_indices = set()
+
+        if max_score > 0:
+            # Find the first best response
+            max_index = scores.index(max_score)
+            best_response_doc = responses[max_index]['docs'][0]
+            added_indices.add(max_index)
+
+            # Collect up to 3 negative responses
+            neg_count = 0
+            for i, score in enumerate(scores):
+                if neg_count >= n_negs:  # Stop after collecting enough negatives
+                    break
+                if i not in added_indices:  # Ensure it's not the best response and not already added
+                    negative_responses_docs.append(responses[i]['docs'][0])
+                    added_indices.add(i)  # Mark as added to avoid duplicates if more logic were added
+                    neg_count += 1
+
+            feedback_entry = {
+                "qry": item["qry"],
+                "qry_image_path": [],
+                "pos_text": best_response_doc['text'],
+                "pos_image_path": best_response_doc['images'],
+                "neg_text": [neg_doc['text'] for neg_doc in negative_responses_docs],
+                "neg_image_path": [neg_doc['images'] for neg_doc in negative_responses_docs],
+                "score": max_score,
+            }
+            feedback_dataset.append(feedback_entry)
+
+    print(f"Feedback dataset size: {len(feedback_dataset)}")
+    with open(os.path.join(feedback_dir, "mmqa_feedback.json"), "w", encoding="utf-8") as f:
+        json.dump(feedback_dataset, f, indent=2, ensure_ascii=False)
+
+
+    # 3. ScienceQA
+    dataset = json.load(open(os.path.join(generation_dir, "scienceqa_generation.json"), "r"))
+    print("Processing feedback for ScienceQA...")
+
+    feedback_dataset = []
+
+    for item in tqdm(dataset, desc="Processing ScienceQA"):
+        correct_choice = item["answer"]
+        responses = item["responses"]
+        scores = []
+
+        for response in responses:
+            pred = response["response"]
+            score = int(normalize_answer(pred.strip()) == normalize_answer(correct_choice.strip()))  # Accuracy metric
+            scores.append(score)
+
+        max_score = max(scores)
+
+        # Initialize lists for positive and negative samples
+        best_response_lec = None
+        best_response_qa = None
+        negative_responses_lecs = []
+        negative_responses_qas = []
+
+        # Track indices of responses already added (either best or negative)
+        added_indices = set()
+
+        if max_score > 0:
+            # Find the first best response
+            max_index = scores.index(max_score)
+            best_response_lec = responses[max_index]['lectures'][0]
+            best_response_qa = responses[max_index]['example_qas'][0]
+            added_indices.add(max_index)
+
+            # Collect up to 3 negative responses
+            neg_count = 0
+            for i, score in enumerate(scores):
+                if neg_count >= n_negs:  # Stop after collecting enough negatives
+                    break
+                if i not in added_indices:  # Ensure it's not the best response and not already added
+                    negative_responses_lecs.append(responses[i]['lectures'][0])
+                    negative_responses_qas.append(responses[i]['example_qas'][0])
+                    added_indices.add(i)  # Mark as added to avoid duplicates if more logic were added
+                    neg_count += 1
+
+            feedback_entry_lec = {
+                "qry": item["qry"],
+                "qry_image_path": item["qry_image_path"],
+                "pos_text": best_response_lec,
+                "pos_image_path": [],
+                "neg_text": [neg_doc for neg_doc in negative_responses_lecs],
+                "neg_image_path": [[] for _ in negative_responses_lecs],
+                "score": max_score,
+            }
+            feedback_entry_qa = {
+                "qry": item["qry"],
+                "qry_image_path": item["qry_image_path"],
+                "pos_text": best_response_qa['text'],
+                "pos_image_path": [best_response_qa['image']] if best_response_qa['image'] else [],
+                "neg_text": [neg_doc['text'] for neg_doc in negative_responses_qas],
+                "neg_image_path": [[neg_doc['image']] if neg_doc['image'] else [] for neg_doc in negative_responses_qas],
+                "score": max_score,
+            }
+            feedback_dataset.append(feedback_entry_lec)
+            feedback_dataset.append(feedback_entry_qa)
+
+    print(f"Feedback dataset size: {len(feedback_dataset)}")
+    with open(os.path.join(feedback_dir, "scienceqa_feedback.json"), "w", encoding="utf-8") as f:
+        json.dump(feedback_dataset, f, indent=2, ensure_ascii=False)
+
+
+    # 4. NyxQA
+    dataset = json.load(open(os.path.join(generation_dir, "nyxqa_generation.json"), "r"))
+    print("Processing feedback for NyxQA...")
+
+    feedback_dataset = []
+
+    for item in tqdm(dataset, desc="Processing NyxQA"):
+        correct_choice = item["answer"]
+        responses = item["responses"]
+        scores = []
+
+        for response in responses:
+            pred = response["response"]
+            score = int(normalize_answer(pred.strip()) == normalize_answer(correct_choice.strip()))  # Accuracy metric
+            scores.append(score)
+
+        max_score = max(scores)
+
+        # Initialize lists for positive and negative samples
+        best_response_doc = None
+        negative_responses_docs = []
+
+        # Track indices of responses already added (either best or negative)
+        added_indices = set()
+
+        if max_score > 0:
+            # Find the first best response
+            max_index = scores.index(max_score)
+            best_response_doc = responses[max_index]['docs'][0]
+            added_indices.add(max_index)
+
+            # Collect up to 3 negative responses
+            neg_count = 0
+            for i, score in enumerate(scores):
+                if neg_count >= n_negs:  # Stop after collecting enough negatives
+                    break
+                if i not in added_indices:  # Ensure it's not the best response and not already added
+                    negative_responses_docs.append(responses[i]['docs'][0])
+                    added_indices.add(i)  # Mark as added to avoid duplicates if more logic were added
+                    neg_count += 1
+
+            feedback_entry = {
+                "qry": item["qry"],
+                "qry_image_path": item["qry_image_path"],
+                "pos_text": best_response_doc['text'],
+                "pos_image_path": best_response_doc['images'],
+                "neg_text": [neg_doc['text'] for neg_doc in negative_responses_docs],
+                "neg_image_path": [neg_doc['images'] for neg_doc in negative_responses_docs],
+                "score": max_score,
+            }
+            feedback_dataset.append(feedback_entry)
+
+    print(f"Feedback dataset size: {len(feedback_dataset)}")
+    with open(os.path.join(feedback_dir, "nyxqa_feedback.json"), "w", encoding="utf-8") as f:
+        json.dump(feedback_dataset, f, indent=2, ensure_ascii=False)
+
+    
+
+def final_concat():
+    full_dataset = []
+    dataset = json.load(open(os.path.join(feedback_dir, "hotpotqa_feedback.json"), "r"))
+    full_dataset.extend(dataset[:50000])
+    dataset = json.load(open(os.path.join(feedback_dir, "2wikimultihopqa_feedback.json"), "r"))
+    full_dataset.extend(dataset)
+    dataset = json.load(open(os.path.join(feedback_dir, "musique_feedback.json"), "r"))
+    full_dataset.extend(dataset)
+    dataset = json.load(open(os.path.join(feedback_dir, "mmqa_feedback.json"), "r"))
+    for item in dataset:
+        item["qry_image_path"] = ["../MMQA/images/" + img for img in item["qry_image_path"]]
+        item["pos_image_path"] = ["../MMQA/images/" + img for img in item["pos_image_path"]]
+        item["neg_image_path"] = [["../MMQA/images/" + img for img in img_list] for img_list in item["neg_image_path"]]
+    full_dataset.extend(dataset)
+    dataset = json.load(open(os.path.join(feedback_dir, "scienceqa_feedback.json"), "r"))
+    for item in dataset:
+        item["qry_image_path"] = ["../ScienceQA/images/" + img for img in item["qry_image_path"]]
+        item["pos_image_path"] = ["../ScienceQA/images/" + img for img in item["pos_image_path"]]
+        item["neg_image_path"] = [["../ScienceQA/images/" + img for img in img_list] for img_list in item["neg_image_path"]]
+    full_dataset.extend(dataset)
+    dataset = json.load(open(os.path.join(feedback_dir, "nyxqa_feedback.json"), "r"))
+    for item in dataset:
+        item["qry_image_path"] = ["../NyxQA/images/" + img for img in item["qry_image_path"]]
+        item["pos_image_path"] = ["../NyxQA/images/" + img for img in item["pos_image_path"]]
+        item["neg_image_path"] = [["../NyxQA/images/" + img for img in img_list] for img_list in item["neg_image_path"]]
+    full_dataset.extend(dataset)
+
+    with open(os.path.join(feedback_dir, "final_feedback.json"), "w", encoding="utf-8") as f:
+        json.dump(full_dataset, f, indent=2, ensure_ascii=False)
+    print(f"Final feedback dataset saved to {feedback_dir}/final_feedback.json")
 
 if __name__ == "__main__":
     # retrieval()
     # generation()
-    feedback()
+    # feedback()
+    final_concat()
