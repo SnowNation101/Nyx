@@ -12,14 +12,14 @@ from generator import MMGenerator
 from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
 
 # ===========configuration===========
-model_name = "/fs/archive/share/Nyx-3B-Pretrained"
+model_name = "/fs/archive/share/Nyx-3B-Feedback0"
 data_dir = "/fs/archive/share/mm_datasets/ScienceQA"
 
 lecture_path = "scienceqa_lecture_corpus.json"
 example_qa_path = "scienceqa_example_qa_corpus.json"
 
-retrieved_dir = "retrieved/nyx"
-generated_dir = "generated/nyx"
+retrieved_dir = "retrieved/nyx_fb"
+generated_dir = "generated/nyx_fb"
 index_dir = "index"
 retrieve_top_k = 10
 generate_top_k_lec = 1
@@ -58,7 +58,7 @@ with open(example_qa_path, "r") as f:
     example_qa_corpus = json.load(f)
 
 # Index lecture corpus
-if not os.path.exists(os.path.join(index_dir, "nyx_lecture.faiss")):
+if not os.path.exists(os.path.join(index_dir, "lecture_index.faiss")):
     embeddings = []
     for item in tqdm(lecture_corpus, desc="Indexing lecture corpus"):
         text = item
@@ -72,15 +72,15 @@ if not os.path.exists(os.path.join(index_dir, "nyx_lecture.faiss")):
     embeddings = np.vstack(embeddings).astype("float32")
     lecture_index = faiss.IndexFlatIP(embeddings.shape[1])
     lecture_index.add(embeddings)
-    faiss.write_index(lecture_index, os.path.join(index_dir, "nyx_lecture.faiss"))
-    print(f"Lecture corpus indexed and saved to {os.path.join(index_dir, 'nyx_lecture.faiss')}")
+    faiss.write_index(lecture_index, os.path.join(index_dir, "nyx_lecture_fb.faiss"))
+    print(f"Lecture corpus indexed and saved to {os.path.join(index_dir, 'nyx_lecture_fb.faiss')}")
 else:
-    lecture_index = faiss.read_index(os.path.join(index_dir, "nyx_lecture.faiss"))
-    print(f"Lecture corpus loaded from {os.path.join(index_dir, 'nyx_lecture.faiss')}")
+    lecture_index = faiss.read_index(os.path.join(index_dir, "nyx_lecture_fb.faiss"))
+    print(f"Lecture corpus loaded from {os.path.join(index_dir, 'nyx_lecture_fb.faiss')}")
 
 
 # Index example QA corpus
-if not os.path.exists(os.path.join(index_dir, "nyx_example_qa.faiss")):
+if not os.path.exists(os.path.join(index_dir, "example_qa_index.faiss")):
     embeddings = []
     for item in tqdm(example_qa_corpus, desc="Indexing example QA corpus"):
         text = item['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
@@ -99,11 +99,11 @@ if not os.path.exists(os.path.join(index_dir, "nyx_example_qa.faiss")):
     embeddings = np.vstack(embeddings).astype("float32")
     example_qa_index = faiss.IndexFlatIP(embeddings.shape[1])
     example_qa_index.add(embeddings)
-    faiss.write_index(example_qa_index, os.path.join(index_dir, "nyx_example_qa.faiss"))
-    print(f"Example QA corpus indexed and saved to {os.path.join(index_dir, 'nyx_example_qa.faiss')}")
+    faiss.write_index(example_qa_index, os.path.join(index_dir, "nyx_example_qa_fb.faiss"))
+    print(f"Example QA corpus indexed and saved to {os.path.join(index_dir, 'nyx_example_qa_fb.faiss')}")
 else:
-    example_qa_index = faiss.read_index(os.path.join(index_dir, "nyx_example_qa.faiss"))
-    print(f"Example QA corpus loaded from {os.path.join(index_dir, 'nyx_example_qa.faiss')}")
+    example_qa_index = faiss.read_index(os.path.join(index_dir, "nyx_example_qa_fb.faiss"))
+    print(f"Example QA corpus loaded from {os.path.join(index_dir, 'nyx_example_qa_fb.faiss')}")
 
 # ===========retrieving===========
 def retrieve(index, corpus, text, images, top_k=10):

@@ -95,17 +95,15 @@ class TrainDataset(Dataset):
                 train_data.append(subset_data)
         # mixed modal datasets
         if self.data_args.mm_dataset_path:
-            print("Loading mixed modal datasets")
+            print("Loading mixed modal dataset")
             with open(self.data_args.mm_dataset_path, "r") as f:
                 mm_data = json.load(f)
-            if len(mm_data) > self.data_args.num_sample_per_subset and self.data_args.num_sample_per_subset != -1:
-                mm_data = mm_data[:self.data_args.num_sample_per_subset]
+            mm_data = mm_data[:20000]
             # Process image path and images token
             for item in mm_data:
                 item["qry"] = item["qry"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
                 item["pos_text"] = item["pos_text"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
                 item["neg_text"] = [text.replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN) for text in item["neg_text"]]
-            
             mm_data = datasets.Dataset.from_list(mm_data)
             # Convert all fields to string
             column_names = mm_data.column_names
@@ -114,6 +112,25 @@ class TrainDataset(Dataset):
                 fn_kwargs={"column_names": column_names}
             )
             train_data.append(mm_data)
+        # feedback dataset
+        if self.data_args.feedback_dataset_path:
+            print("Loading feedback dataset")
+            with open(self.data_args.feedback_dataset_path, "r") as f:
+                fb_data = json.load(f)
+            # Process image path and images token
+            for item in fb_data:
+                item["qry"] = item["qry"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
+                item["pos_text"] = item["pos_text"].replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN)
+                item["neg_text"] = [text.replace(IMAGE_TOKEN, PHI_IMAGE_TOKEN) for text in item["neg_text"]]
+            
+            fb_data = datasets.Dataset.from_list(fb_data)
+            # Convert all fields to string
+            column_names = fb_data.column_names
+            fb_data = fb_data.map(
+                self._to_string_converter,
+                fn_kwargs={"column_names": column_names}
+            )
+            train_data.append(fb_data)
         
         self.train_data = concatenate_datasets(train_data)
 
@@ -309,7 +326,7 @@ class EvalDataset(Dataset):
         if not img_path:
             return None
         full_img_path = os.path.join(self.data_args.image_dir, img_path)
-        image = Image.open(full_img_path)
+        image = Image.open(full_img_path).convert("RGBA")
         if self.model_args.model_backbone == "llava_next":
             return self._process_image(image, "high")
         else:

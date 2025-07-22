@@ -63,7 +63,7 @@ if not os.path.exists(index_path):
             embeddings.append(output_embedding.float().cpu().numpy())
 
     embeddings = np.array(embeddings).astype(np.float32)
-    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
     faiss.write_index(index, index_path)
 else:

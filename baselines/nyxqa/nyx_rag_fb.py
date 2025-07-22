@@ -8,21 +8,23 @@ from eval_utils import evaluate
 from PIL import Image
 from generator import MMGenerator
 
-from torch import Tensor
-from transformers import AutoTokenizer, AutoModel
+from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
+from qwen_vl_utils import process_vision_info
 
 IMAGE_TOKEN = "<|image|>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
+
 # ===========configuration===========
-model_name = "/fs/archive/share/e5-base-v2"
+
+model_name = "/fs/archive/share/Nyx-3B-Feedback0"
 dataset_dir = "/fs/archive/share/mm_datasets/NyxQA"
 image_dir = "/fs/archive/share/mm_datasets/NyxQA/images"
 
-index_path = "index/e5.faiss"
+index_path = "index/nyx_fb.faiss"
 index_dir = "index"
-retrieved_dir = "retrieved/e5"
-generated_dir = "generated/e5"
+retrieved_dir = "retrieved/nyx_fb"
+generated_dir = "generated/nyx_fb"
 retrieve_top_k = 10
 generate_top_k = 1
 
@@ -30,67 +32,70 @@ os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
+
+def process_images(images):
+    if not images:
+        return None
+    pseudo_message = [{
+        "content": [{"type": "image", "image": image} for image in images]
+    }]
+    images, _ = process_vision_info(pseudo_message)
+    return images
+
 # ===========embedding===========
-def average_pool(last_hidden_states: Tensor,
-                 attention_mask: Tensor) -> Tensor:
-    last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-    return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+def last_pooling(last_hidden_state, attention_mask, normalize=True):
+    sequence_lengths = attention_mask.sum(dim=1) - 1
+    batch_size = last_hidden_state.shape[0]
+    reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
+    if normalize:
+        reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
+    return reps
 
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name).to("cuda")
+processor = Qwen2_5_VLProcessor.from_pretrained(model_name, use_fast=True)
+model = Qwen2_5_VLModel.from_pretrained(
+    model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+).eval()
 
-corpus = json.load(open(os.path.join(dataset_dir, "corpus.json"), "r"))
-captions = json.load(open(os.path.join(dataset_dir, "nyx_caption.json"), "r"))
+with open(os.path.join(dataset_dir, "corpus.json"), "r") as f:
+    corpus = json.load(f)
 
 if not os.path.exists(index_path):
     embeddings = []
     for item in tqdm(corpus, desc="Indexing"):
-        text = item['text']
-        images = item['images']
+        text = item['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
 
-        for i, image in enumerate(images):
-            caption = captions[image.split('.')[0]]
-            text.replace(IMAGE_TOKEN, caption, 1)
+        images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in item['images']]
+        images = process_images(images)
 
-        input_texts = [text]  # Assuming item is a single text entry
-        batch_dict = tokenizer(
-            input_texts, 
-            max_length=512, 
-            padding=True, 
-            truncation=True, 
-            return_tensors='pt').to(model.device)
+        inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
         with torch.no_grad():
-            outputs = model(**batch_dict)
-            output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
-            embeddings.append(output_embedding.float().cpu().numpy())
-
-    embeddings = np.array(embeddings).astype(np.float32)
+            outputs = last_pooling(
+                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+                inputs['attention_mask']
+                )
+        embeddings.append(outputs.float().cpu().numpy())
+    embeddings = np.vstack(embeddings).astype("float32")
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
     faiss.write_index(index, index_path)
+    print(f"Index saved to {index_path}")
 else:
     index = faiss.read_index(index_path)
     print(f"Index loaded from {index_path}")
 
 # ===========retrieval===========
-def retrieve(index, corpus, query, top_k=10):
-    input_texts = [query]
-    batch_dict = tokenizer(
-        input_texts, 
-        max_length=512, 
-        padding=True, 
-        truncation=True, 
-        return_tensors='pt').to(model.device)
-    
+def retrieve(index, corpus, text, images, top_k=10):
+    inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
     with torch.no_grad():
-        outputs = model(**batch_dict)
-        output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
-        query_embedding = output_embedding.float().cpu().numpy()
-    
-    _, I = index.search(query_embedding.reshape(1, -1), top_k)
+        query_embedding = last_pooling(
+            model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+            inputs['attention_mask']
+        ).float().cpu().numpy()
+    _, I = index.search(query_embedding, top_k)
     return [corpus[i] for i in I[0]]
 
-test_data = json.load(open(os.path.join(dataset_dir, "test.json"), "r"))
+with open(os.path.join(dataset_dir, "test.json"), "r") as f:
+    test_data = json.load(f)
 
 for item in tqdm(test_data, desc="Retrieving documents for test"):
     question = item['qry']
@@ -99,18 +104,19 @@ for item in tqdm(test_data, desc="Retrieving documents for test"):
 
     text = "Please retrieve the most relevant document to answer the question.\nQuestion: " + question
     text = text + "\nChoices: " + ", ".join(choices)
-    
-    for i, image_path in enumerate(image_paths):
-        caption = captions[image_path.split('.')[0]]
-        text = text.replace(IMAGE_TOKEN, caption, 1)
+    text = text.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
+
+    images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in image_paths]
+    images = process_images(images)
 
     item['retrieved_docs'] = retrieve(
         index=index,
         corpus=corpus,
-        query=text,
+        text=text,
+        images=images,
         top_k=retrieve_top_k
     )
-
+    
 with open(os.path.join(retrieved_dir, "test_retrieved_docs.json"), "w") as f:
     json.dump(test_data, f, indent=2, ensure_ascii=False)
 print(f"Retrieved docs saved: {retrieved_dir}/test_retrieved_docs.json")
@@ -147,8 +153,7 @@ for item in tqdm(test_data, desc="Generating answers for test"):
             image = Image.open(os.path.join(image_dir, image_path)).convert("RGBA")
             images.append(image)
     
-    if not images:
-        images = None
+    images = process_images(images)
     
     answer = vlm.generate(
         docs=docs,

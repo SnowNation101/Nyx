@@ -86,6 +86,9 @@ class DataArguments:
     mm_dataset_path: str = field(
         default=None, metadata={"help": "local multimodal dataset path"}
     )
+    feedback_dataset_path: str = field(
+        default=None, metadata={"help": "local feedback dataset path"}
+    )
     dataset_split: str = field(
         default='train', metadata={"help": "dataset split"}
     )

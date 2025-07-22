@@ -215,229 +215,229 @@ def generation():
         stop_token_ids=[],
     )
 
-    # # 1. Text-only generation
-    # for subset in ["hotpotqa", "2wikimultihopqa", "musique"]:
-    #     print(f"Generating responses for {subset}...")
-    #     llm_inputs = []
-    #     dataset = json.load(open(os.path.join(retrieval_dir, f"{subset}_retrieval.json"), "r"))
+    # 1. Text-only generation
+    for subset in ["hotpotqa", "2wikimultihopqa", "musique"]:
+        print(f"Generating responses for {subset}...")
+        llm_inputs = []
+        dataset = json.load(open(os.path.join(retrieval_dir, f"{subset}_retrieval.json"), "r"))
         
-    #     window_length = 1 # Number of documents to consider in each sliding window
-    #     window_cnt = retrieve_top_k - window_length + 1  # Number of sliding windows for each query
+        window_length = 1 # Number of documents to consider in each sliding window
+        window_cnt = retrieve_top_k - window_length + 1  # Number of sliding windows for each query
 
-    #     for item in dataset:
-    #         question = item["qry"]
-    #         retrieved_docs = item["retrieved_docs"]
+        for item in dataset:
+            question = item["qry"]
+            retrieved_docs = item["retrieved_docs"]
 
-    #         sys_prompt = (
-    #             "Answer the question based on the given document. "
-    #             "Only give me the answer and do not output any other words.\n"
-    #             "The following are given documents."
-    #         )
+            sys_prompt = (
+                "Answer the question based on the given document. "
+                "Only give me the answer and do not output any other words.\n"
+                "The following are given documents."
+            )
 
-    #         question_text = f"Question: {question}\n"
+            question_text = f"Question: {question}\n"
 
-    #         # Sliding window over retrieved documents
-    #         # Here, window_length = 1, meaning only one document is used at a time
-    #         for doc in retrieved_docs:
-    #             prompt = f"Document: {doc}\n" + question_text
-    #             messages = [
-    #                 {"role": "system", "content": sys_prompt},
-    #                 {"role": "user", "content": [{"type": "text", "text": prompt}]}
-    #             ]
+            # Sliding window over retrieved documents
+            # Here, window_length = 1, meaning only one document is used at a time
+            for doc in retrieved_docs:
+                prompt = f"Document: {doc}\n" + question_text
+                messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": [{"type": "text", "text": prompt}]}
+                ]
 
-    #             input_text = processor.apply_chat_template(
-    #                 messages, tokenize=False, add_generation_prompt=True
-    #             )
+                input_text = processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
 
-    #             llm_inputs.append({
-    #                 "prompt": input_text
-    #             })
+                llm_inputs.append({
+                    "prompt": input_text
+                })
 
-    #     # Batch generate responses
-    #     outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
+        # Batch generate responses
+        outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
 
-    #     # Combine generated responses with original data
-    #     results = []
-    #     output_index = 0  # Used to track the current index of outputs
-    #     for item in dataset:
-    #         response_list = []
-    #         for window_idx in range(window_cnt):
-    #             response = outputs[output_index].outputs[0].text  # Get the text of the current output
-    #             response_list.append({
-    #                 "docs": [{
-    #                     "text": item["retrieved_docs"][window_idx],
-    #                     "images": [],
-    #                 }],
-    #                 "response": response
-    #             })
-    #             output_index += 1  # Move to the next output
+        # Combine generated responses with original data
+        results = []
+        output_index = 0  # Used to track the current index of outputs
+        for item in dataset:
+            response_list = []
+            for window_idx in range(window_cnt):
+                response = outputs[output_index].outputs[0].text  # Get the text of the current output
+                response_list.append({
+                    "docs": [{
+                        "text": item["retrieved_docs"][window_idx],
+                        "images": [],
+                    }],
+                    "response": response
+                })
+                output_index += 1  # Move to the next output
 
-    #         results.append({
-    #             "qry": item["qry"],
-    #             "qry_image_path": [],
-    #             "answer": item["ans"],
-    #             "responses": response_list
-    #         })
+            results.append({
+                "qry": item["qry"],
+                "qry_image_path": [],
+                "answer": item["ans"],
+                "responses": response_list
+            })
 
-    #     # Save results to file
-    #     with open(os.path.join(generation_dir, f"{subset}_generation.json"), "w") as f:
-    #         json.dump(results, f, indent=2, ensure_ascii=False)
-    #     print(f"Generated responses for {subset} saved to {generation_dir}/{subset}_generation.json")
+        # Save results to file
+        with open(os.path.join(generation_dir, f"{subset}_generation.json"), "w") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        print(f"Generated responses for {subset} saved to {generation_dir}/{subset}_generation.json")
             
 
-    # # 2. MMQA generation
-    # print("Generating responses for MMQA...")
-    # dataset = json.load(open(f"{retrieval_dir}/mmqa_retrieval.json", "r"))
-    # mmqa_img_dir = "/fs/archive/share/mm_datasets/MMQA/images"
+    # 2. MMQA generation
+    print("Generating responses for MMQA...")
+    dataset = json.load(open(f"{retrieval_dir}/mmqa_retrieval.json", "r"))
+    mmqa_img_dir = "/fs/archive/share/mm_datasets/MMQA/images"
 
-    # window_length = 1
-    # window_cnt = retrieve_top_k - window_length + 1
+    window_length = 1
+    window_cnt = retrieve_top_k - window_length + 1
 
-    # sys_prompt = (
-    #     "Answer the question based on the given document. "
-    #     "Only give me the answer and do not output any other words.\n"
-    #     "The following are given documents."
-    # )
+    sys_prompt = (
+        "Answer the question based on the given document. "
+        "Only give me the answer and do not output any other words.\n"
+        "The following are given documents."
+    )
 
-    # llm_inputs = []
-    # for item in dataset:
-    #     question = item["question"]
-    #     retrieved_docs = item["retrieved_docs"]
+    llm_inputs = []
+    for item in dataset:
+        question = item["question"]
+        retrieved_docs = item["retrieved_docs"]
 
-    #     question_text = f"Question: {question}\n"
+        question_text = f"Question: {question}\n"
 
-    #     for doc in retrieved_docs:
-    #         images = []
-    #         if doc['image']:
-    #             image = Image.open(os.path.join(mmqa_img_dir, doc['image'])).convert("RGBA")
-    #             images.append(image)
-    #         images = process_images(images)
+        for doc in retrieved_docs:
+            images = []
+            if doc['image']:
+                image = Image.open(os.path.join(mmqa_img_dir, doc['image'])).convert("RGBA")
+                images.append(image)
+            images = process_images(images)
 
-    #         prompt = f"Document: {doc['text']}\n" + question_text
-    #         prompt = prompt.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
-    #         messages = [
-    #             {"role": "system", "content": sys_prompt},
-    #             {"role": "user", "content": [{"type": "text", "text": prompt}]}
-    #         ]
+            prompt = f"Document: {doc['text']}\n" + question_text
+            prompt = prompt.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": [{"type": "text", "text": prompt}]}
+            ]
 
-    #         input_text = processor.apply_chat_template(
-    #             messages, tokenize=False, add_generation_prompt=True
-    #         )
+            input_text = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
-    #         entry = {"prompt": input_text}
-    #         if images:
-    #             entry["multi_modal_data"] = {"image": images}
-    #         llm_inputs.append(entry)
+            entry = {"prompt": input_text}
+            if images:
+                entry["multi_modal_data"] = {"image": images}
+            llm_inputs.append(entry)
 
-    # outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
+    outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
 
-    # results = []
-    # output_index = 0
-    # for item in dataset:
-    #     response_list = []
-    #     for window_idx in range(window_cnt):
-    #         response = outputs[output_index].outputs[0].text
-    #         doc = item["retrieved_docs"][window_idx]
-    #         text = doc['text']
-    #         images = [doc['image']] if doc['image'] else []
-    #         response_list.append({
-    #             "docs": [{"text": text, "images": images}],
-    #             "response": response
-    #         })
-    #         output_index += 1
+    results = []
+    output_index = 0
+    for item in dataset:
+        response_list = []
+        for window_idx in range(window_cnt):
+            response = outputs[output_index].outputs[0].text
+            doc = item["retrieved_docs"][window_idx]
+            text = doc['text']
+            images = [doc['image']] if doc['image'] else []
+            response_list.append({
+                "docs": [{"text": text, "images": images}],
+                "response": response
+            })
+            output_index += 1
 
-    #     answers = [ans['answer'] for ans in item['answers']]
-    #     results.append({
-    #         "qry": item["question"],
-    #         "qry_image_path": [],
-    #         "answer": answers,
-    #         "responses": response_list
-    #     })
+        answers = [ans['answer'] for ans in item['answers']]
+        results.append({
+            "qry": item["question"],
+            "qry_image_path": [],
+            "answer": answers,
+            "responses": response_list
+        })
     
-    # with open(os.path.join(generation_dir, "mmqa_generation.json"), "w") as f:
-    #     json.dump(results, f, indent=2, ensure_ascii=False)
-    # print(f"Generated responses for MMQA saved to {generation_dir}/mmqa_generation.json")
+    with open(os.path.join(generation_dir, "mmqa_generation.json"), "w") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"Generated responses for MMQA saved to {generation_dir}/mmqa_generation.json")
 
-    # # 3. ScienceQA generation
-    # print("Generating responses for ScienceQA...")
-    # dataset = json.load(open(f"{retrieval_dir}/scienceqa_retrieval.json", "r"))
+    # 3. ScienceQA generation
+    print("Generating responses for ScienceQA...")
+    dataset = json.load(open(f"{retrieval_dir}/scienceqa_retrieval.json", "r"))
     
-    # # ScienceQA has two types of documents: lecture and example Q&A
-    # # Each question we concat one lecture and two example Q&A
-    # window_length = 2
-    # window_cnt = retrieve_top_k - window_length + 1
+    # ScienceQA has two types of documents: lecture and example Q&A
+    # Each question we concat one lecture and two example Q&A
+    window_length = 2
+    window_cnt = retrieve_top_k - window_length + 1
 
-    # sys_prompt = (
-    #     "Answer the question. You may refer to the following lecture and example QA to help you answer. "
-    #     "Only give me the answer and do not output any other words.\n"
-    #     "The following are the lecture and example QAs."
-    # )
+    sys_prompt = (
+        "Answer the question. You may refer to the following lecture and example QA to help you answer. "
+        "Only give me the answer and do not output any other words.\n"
+        "The following are the lecture and example QAs."
+    )
 
-    # llm_inputs = []
-    # for item in tqdm(dataset, desc="Preparing ScienceQA inputs"):
-    #     question = item['question']
-    #     choices = item['choices']
-    #     retrieved_lecture = item['retrieved_lecture']
-    #     retrieved_example_qa = item['retrieved_example_qa']
+    llm_inputs = []
+    for item in tqdm(dataset, desc="Preparing ScienceQA inputs"):
+        question = item['question']
+        choices = item['choices']
+        retrieved_lecture = item['retrieved_lecture']
+        retrieved_example_qa = item['retrieved_example_qa']
 
-    #     qry_images = []
-    #     if item['image']:
-    #         image = Image.open(os.path.join("/fs/archive/share/mm_datasets/ScienceQA/images/train", item['pid'], item['image'])).convert("RGBA")
-    #         qry_images.append(image)
-    #         question = QWEN_IMAGE_TOKEN + question
+        qry_images = []
+        if item['image']:
+            image = Image.open(os.path.join("/fs/archive/share/mm_datasets/ScienceQA/images/train", item['pid'], item['image'])).convert("RGBA")
+            qry_images.append(image)
+            question = QWEN_IMAGE_TOKEN + question
         
-    #     for idx in range(window_cnt):
-    #         images = qry_images.copy()
-    #         lecture = retrieved_lecture[idx]
-    #         prompt = f"Lecture: {lecture}\n"
-    #         for qa_idx in range(window_length):
-    #             example_qa = retrieved_example_qa[qa_idx]
-    #             prompt += f"Example Q&A {qa_idx + 1}: {example_qa['text']}\n"
-    #             if example_qa['image']:
-    #                 image = Image.open(os.path.join("/fs/archive/share/mm_datasets/ScienceQA/images", example_qa['image'])).convert("RGBA")
-    #                 images.append(image)
-    #         prompt += f"Question: {question}\nChoices: {', '.join(choices)}\n"
-    #         prompt = prompt.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
-    #         messages = [
-    #             {"role": "system", "content": sys_prompt},
-    #             {"role": "user", "content": [{"type": "text", "text": prompt}]}
-    #         ]
-    #         input_text = processor.apply_chat_template(
-    #             messages, tokenize=False, add_generation_prompt=True
-    #         )
+        for idx in range(window_cnt):
+            images = qry_images.copy()
+            lecture = retrieved_lecture[idx]
+            prompt = f"Lecture: {lecture}\n"
+            for qa_idx in range(window_length):
+                example_qa = retrieved_example_qa[qa_idx]
+                prompt += f"Example Q&A {qa_idx + 1}: {example_qa['text']}\n"
+                if example_qa['image']:
+                    image = Image.open(os.path.join("/fs/archive/share/mm_datasets/ScienceQA/images", example_qa['image'])).convert("RGBA")
+                    images.append(image)
+            prompt += f"Question: {question}\nChoices: {', '.join(choices)}\n"
+            prompt = prompt.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": [{"type": "text", "text": prompt}]}
+            ]
+            input_text = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
-    #         entry = {"prompt": input_text}
-    #         if images:
-    #             entry["multi_modal_data"] = {"image": images}
-    #         llm_inputs.append(entry)
+            entry = {"prompt": input_text}
+            if images:
+                entry["multi_modal_data"] = {"image": images}
+            llm_inputs.append(entry)
     
-    # outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
+    outputs = llm.generate(llm_inputs, sampling_params=sampling_params)
 
-    # results = []
-    # output_index = 0
-    # for item in dataset:
-    #     response_list = []
-    #     for window_idx in range(window_cnt):
-    #         response = outputs[output_index].outputs[0].text
-    #         lecture = item["retrieved_lecture"][window_idx]
-    #         response_list.append({
-    #             "lectures": [lecture],
-    #             "example_qas": [item["retrieved_example_qa"][window_idx], item["retrieved_example_qa"][window_idx + 1]],
-    #             "response": response
-    #         })
-    #         output_index += 1
+    results = []
+    output_index = 0
+    for item in dataset:
+        response_list = []
+        for window_idx in range(window_cnt):
+            response = outputs[output_index].outputs[0].text
+            lecture = item["retrieved_lecture"][window_idx]
+            response_list.append({
+                "lectures": [lecture],
+                "example_qas": [item["retrieved_example_qa"][window_idx], item["retrieved_example_qa"][window_idx + 1]],
+                "response": response
+            })
+            output_index += 1
 
-    #     answer = item['choices'][item['answer']]
-    #     results.append({
-    #         "qry": item["question"],
-    #         "qry_image_path": [],
-    #         "answer": answer,
-    #         "responses": response_list
-    #     })
+        answer = item['choices'][item['answer']]
+        results.append({
+            "qry": item["question"],
+            "qry_image_path": [],
+            "answer": answer,
+            "responses": response_list
+        })
     
-    # with open(os.path.join(generation_dir, "scienceqa_generation.json"), "w") as f:
-    #     json.dump(results, f, indent=2, ensure_ascii=False)
-    # print(f"Generated responses for ScienceQA saved to {generation_dir}/scienceqa_generation.json")
+    with open(os.path.join(generation_dir, "scienceqa_generation.json"), "w") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"Generated responses for ScienceQA saved to {generation_dir}/scienceqa_generation.json")
         
 
     # 4. NyxQA generation
@@ -586,6 +586,7 @@ def compute_f1(a_pred, a_true):
 
 def feedback():
     # 1. Text-only
+    instruction = "Please retrieve the most relevant document to answer the question.\n"
     for subset in ["hotpotqa", "2wikimultihopqa", "musique"]:
         dataset = json.load(open(os.path.join(generation_dir, f"{subset}_generation.json"), "r"))
         print(f"Processing feedback for {subset}...")
@@ -628,7 +629,7 @@ def feedback():
                         neg_count += 1
                 
                 feedback_entry = {
-                    "qry": item["qry"],
+                    "qry": instruction + item["qry"],
                     "qry_image_path": [],
                     "pos_text": best_response_doc['text'],
                     "pos_image_path": best_response_doc['images'],
@@ -644,6 +645,7 @@ def feedback():
 
 
     # 2. MMQA
+    instruction = "Please retrieve the most relevant document to answer the question.\n"
     dataset = json.load(open(os.path.join(generation_dir, "mmqa_generation.json"), "r"))
     print("Processing feedback for MMQA...")
 
@@ -685,7 +687,7 @@ def feedback():
                     neg_count += 1
 
             feedback_entry = {
-                "qry": item["qry"],
+                "qry": instruction + item["qry"],
                 "qry_image_path": [],
                 "pos_text": best_response_doc['text'],
                 "pos_image_path": best_response_doc['images'],
@@ -701,6 +703,8 @@ def feedback():
 
 
     # 3. ScienceQA
+    instruction_lec = "Please retrieve the most relevant lecture to answer the question.\n"
+    instruction_qa = "Please retrieve the most relevant example Q&A to answer the question.\n"
     dataset = json.load(open(os.path.join(generation_dir, "scienceqa_generation.json"), "r"))
     print("Processing feedback for ScienceQA...")
 
@@ -746,7 +750,7 @@ def feedback():
                     neg_count += 1
 
             feedback_entry_lec = {
-                "qry": item["qry"],
+                "qry": instruction_lec + item["qry"],
                 "qry_image_path": item["qry_image_path"],
                 "pos_text": best_response_lec,
                 "pos_image_path": [],
@@ -755,7 +759,7 @@ def feedback():
                 "score": max_score,
             }
             feedback_entry_qa = {
-                "qry": item["qry"],
+                "qry": instruction_qa + item["qry"],
                 "qry_image_path": item["qry_image_path"],
                 "pos_text": best_response_qa['text'],
                 "pos_image_path": [best_response_qa['image']] if best_response_qa['image'] else [],
@@ -772,6 +776,7 @@ def feedback():
 
 
     # 4. NyxQA
+    instruction = "Please retrieve the most relevant document to answer the question.\n"
     dataset = json.load(open(os.path.join(generation_dir, "nyxqa_generation.json"), "r"))
     print("Processing feedback for NyxQA...")
 
@@ -813,7 +818,7 @@ def feedback():
                     neg_count += 1
 
             feedback_entry = {
-                "qry": item["qry"],
+                "qry": instruction + item["qry"],
                 "qry_image_path": item["qry_image_path"],
                 "pos_text": best_response_doc['text'],
                 "pos_image_path": best_response_doc['images'],
@@ -832,7 +837,7 @@ def feedback():
 def final_concat():
     full_dataset = []
     dataset = json.load(open(os.path.join(feedback_dir, "hotpotqa_feedback.json"), "r"))
-    full_dataset.extend(dataset[:50000])
+    full_dataset.extend(dataset)
     dataset = json.load(open(os.path.join(feedback_dir, "2wikimultihopqa_feedback.json"), "r"))
     full_dataset.extend(dataset)
     dataset = json.load(open(os.path.join(feedback_dir, "musique_feedback.json"), "r"))
@@ -860,8 +865,51 @@ def final_concat():
         json.dump(full_dataset, f, indent=2, ensure_ascii=False)
     print(f"Final feedback dataset saved to {feedback_dir}/final_feedback.json")
 
+
+def after_care():
+    # === ScienceQA ===
+    ret_dataset = json.load(open("outputs/retrieval/scienceqa_retrieval.json", "r"))
+    gen_dataset = json.load(open("outputs/generation/scienceqa_generation.json", "r"))
+
+    for i in range(len(ret_dataset)):
+        question = ret_dataset[i]["question"]
+        choices = ret_dataset[i]["choices"]
+        qry = f"Question: {question}\nChoices: {', '.join(choices)}"
+        gen_dataset[i]["qry"] = qry
+
+    with open("outputs/generation/scienceqa_generation.json", "w") as f:
+        json.dump(gen_dataset, f, indent=2, ensure_ascii=False)
+    print("Updated scienceqa_generation.json with formatted queries.")
+
+    # === NyxQA ===
+    ret_dataset = json.load(open("outputs/retrieval/nyxqa_retrieval.json", "r"))
+    gen_dataset = json.load(open("outputs/generation/nyxqa_generation.json", "r"))
+
+    for i in range(len(ret_dataset)):
+        question = ret_dataset[i]["qry"]
+        choices = ret_dataset[i]["choices"]
+        qry = f"Question: {question}\nChoices: {', '.join(choices)}"
+        gen_dataset[i]["qry"] = qry
+
+    with open("outputs/generation/nyxqa_generation.json", "w") as f:
+        json.dump(gen_dataset, f, indent=2, ensure_ascii=False)
+    print("Updated nyxqa_generation.json with formatted queries.")
+
+    dataset = json.load(open("/fs/archive/share/mm_datasets/NyxQA/train_hardneg.json", "r"))
+    for item in dataset:
+        item["qry_image_path"] = ["../NyxQA/images/" + img for img in item["qry_image_path"]]
+        item["pos_image_path"] = ["../NyxQA/images/" + img for img in item["pos_image_path"]]
+        item["neg_image_path"] = [["../NyxQA/images/" + img for img in img_list] for img_list in item["neg_image_path"]]
+
+
+    with open("/fs/archive/share/mm_datasets/NyxQA/train_hardneg_new.json", "w") as f:
+        json.dump(dataset, f, indent=2, ensure_ascii=False)
+    print("Updated NyxQA dataset with image paths.")
+
+
 if __name__ == "__main__":
-    # retrieval()
-    # generation()
-    # feedback()
+    retrieval()
+    generation()
+    feedback()
     final_concat()
+    after_care()

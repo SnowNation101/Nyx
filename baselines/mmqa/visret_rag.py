@@ -9,19 +9,21 @@ import re
 import string
 from PIL import Image
 from generator import MMGenerator
+from transformers import AutoModel, AutoTokenizer
+import torch.nn.functional as F
 
-from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
-from qwen_vl_utils import process_vision_info
+IMAGE_TOKEN = "<|image|>"
+QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
-# ===========configuration===========
-
-model_name = "/fs/archive/share/Nyx-3B-Pretrained"
+# ==========configuration===========
+model_name = "/fs/archive/share/VisRAG-Ret"
 corpus_path = "mmqa_corpus_with_captions.json"
-index_path = "index/nyx.faiss"
+index_path = "index/visret.faiss"
+image_dir = "/fs/archive/share/mm_datasets/MMQA/images"
 
 index_dir = "index"
-retrieved_dir = "retrieved/nyx"
-generated_dir = "generated/nyx"
+retrieved_dir = "retrieved/visret"
+generated_dir = "generated/visret"
 retrieve_top_k = 10
 generate_top_k = 1
 
@@ -29,50 +31,65 @@ os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
-
-def process_images(images):
-    if not images:
-        return None
-    pseudo_message = [{
-        "content": [{"type": "image", "image": image} for image in images]
-    }]
-    images, _ = process_vision_info(pseudo_message)
-    return images
-
 # ===========embedding===========
-def last_pooling(last_hidden_state, attention_mask, normalize=True):
-    sequence_lengths = attention_mask.sum(dim=1) - 1
-    batch_size = last_hidden_state.shape[0]
-    reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
-    if normalize:
-        reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, trust_remote_code=True).cuda()
+model.eval()
+
+def weighted_mean_pooling(hidden, attention_mask):
+    attention_mask_ = attention_mask * attention_mask.cumsum(dim=1)
+    s = torch.sum(hidden * attention_mask_.unsqueeze(-1).float(), dim=1)
+    d = attention_mask_.sum(dim=1, keepdim=True).float()
+    reps = s / d
     return reps
 
-processor = Qwen2_5_VLProcessor.from_pretrained(model_name, use_fast=True)
-model = Qwen2_5_VLModel.from_pretrained(
-    model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
-).eval()
+@torch.no_grad()
+def encode(text_list=None, image_list=None):
+    all_embeddings = []
 
-with open(corpus_path, "r") as f:
-    corpus = json.load(f)
+    if text_list:
+        inputs_text = {
+            "text": text_list,
+            "image": [None] * len(text_list),
+            "tokenizer": tokenizer
+        }
+        outputs_text = model(**inputs_text)
+        reps_text = weighted_mean_pooling(outputs_text.last_hidden_state, outputs_text.attention_mask)
+        reps_text = F.normalize(reps_text, p=2, dim=1).detach().cpu().numpy()
+        all_embeddings.extend(reps_text)
+
+    if image_list:
+        inputs_image = {
+            "text": [''] * len(image_list),
+            "image": image_list,
+            "tokenizer": tokenizer
+        }
+        outputs_image = model(**inputs_image)
+        reps_image = weighted_mean_pooling(outputs_image.last_hidden_state, outputs_image.attention_mask)
+        reps_image = F.normalize(reps_image, p=2, dim=1).detach().cpu().numpy()
+        all_embeddings.extend(reps_image)
+
+    if not all_embeddings:
+        raise ValueError("At least one of text_list or image_list must be provided.")
+
+    all_embeddings = np.array(all_embeddings)
+    final_embedding = np.mean(all_embeddings, axis=0)
+
+    return final_embedding
+
+corpus = json.load(open(corpus_path, "r"))
 
 if not os.path.exists(index_path):
     embeddings = []
     for item in tqdm(corpus, desc="Indexing"):
-        text = item['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
-        if item['image'] != "":
-            image = Image.open(os.path.join("/fs/archive/share/mm_datasets/MMQA/images", item['image']))
+        text = item['text'].replace(IMAGE_TOKEN, "")
+        if item['image']:
+            image = Image.open(os.path.join(image_dir, item['image'])).convert("RGB")
             images = [image]
         else:
             images = None
-        images = process_images(images)
-        inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            outputs = last_pooling(
-                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-                inputs['attention_mask']
-                )
-            embeddings.append(outputs.float().cpu().numpy())
+        outputs = encode(text_list=[text], image_list=images)
+        embeddings.append(outputs)
     embeddings = np.vstack(embeddings).astype("float32")
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
@@ -84,20 +101,15 @@ else:
 
 # ===========retrieving===========
 def retrieve(index, corpus, text, images, top_k=10):
-    inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-    with torch.no_grad():
-        query_embedding = last_pooling(
-            model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-            inputs['attention_mask']
-        ).float().cpu().numpy()
-    _, I = index.search(query_embedding, top_k)
+    query_embedding = encode(text_list=[text], image_list=images)
+    _, I = index.search(query_embedding.reshape(1, -1), top_k)
     return [corpus[i] for i in I[0]]
 
 with open("/fs/archive/share/mm_datasets/MMQA/MMQA_dev.jsonl", "r") as f:
     dataset = [json.loads(line) for line in f]
 
 for item in tqdm(dataset, desc=f"Retrieving dev set"):
-    question = "Please retrieve the most relevant document to answer the question" + item["question"]
+    question = item["question"]
     item['retrieved_docs'] = retrieve(
         index=index,
         corpus=corpus,
@@ -184,6 +196,6 @@ for item in tqdm(dataset, desc=f"evaluating dev answers"):
     count += 1
 avg_em = total_em / count
 avg_f1 = total_f1 / count
-print(f"\nNyx RAG dev Evaluation:")
+print(f"\nEvaluation:")
 print(f"  Exact Match: {avg_em:.4f}")
 print(f"  F1 Score:    {avg_f1:.4f}")

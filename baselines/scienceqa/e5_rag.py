@@ -86,7 +86,7 @@ def question_get_caption(pid):
 #             embeddings.append(output_embedding.float().cpu().numpy())
     
 #     embeddings = np.array(embeddings).astype('float32')
-#     lecture_index = faiss.IndexFlatL2(embeddings.shape[1])
+#     lecture_index = faiss.IndexFlatIP(embeddings.shape[1])
 #     lecture_index.add(embeddings)
 #     faiss.write_index(lecture_index, f"{index_dir}/e5_lecture.faiss")
 #     print(f"Lecture index saved to {index_dir}/e5_lecture.faiss")
@@ -114,7 +114,7 @@ def question_get_caption(pid):
 #             embeddings.append(output_embedding.float().cpu().numpy())
 
 #     embeddings = np.array(embeddings).astype('float32')
-#     example_qa_index = faiss.IndexFlatL2(embeddings.shape[1])
+#     example_qa_index = faiss.IndexFlatIP(embeddings.shape[1])
 #     example_qa_index.add(embeddings)
 #     faiss.write_index(example_qa_index, f"{index_dir}/e5_example_qa.faiss")
 #     print(f"Example QA index saved to {index_dir}/e5_example_qa.faiss")

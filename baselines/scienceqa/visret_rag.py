@@ -1,26 +1,29 @@
+from transformers import AutoModel, AutoTokenizer
 import torch
+import torch.nn.functional as F
+from PIL import Image
+import numpy as np
 import json
 import os
-import numpy as np
 import faiss
 from tqdm import tqdm
+from generator import MMGenerator
 import re
 import string
-from PIL import Image
-from generator import MMGenerator
 
-from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
+
+IMAGE_TOKEN = "<|image|>"
+QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 # ===========configuration===========
-model_name = "/fs/archive/share/Nyx-3B-Pretrained"
-data_dir = "/fs/archive/share/mm_datasets/ScienceQA"
-
+model_name = "/fs/archive/share/VisRAG-Ret"
+data_dir = "/fs/archive/share/mm_datasets/NyxQA"
 lecture_path = "scienceqa_lecture_corpus.json"
 example_qa_path = "scienceqa_example_qa_corpus.json"
 
-retrieved_dir = "retrieved/nyx"
-generated_dir = "generated/nyx"
 index_dir = "index"
+retrieved_dir = "retrieved/visret"
+generated_dir = "generated/visret"
 retrieve_top_k = 10
 generate_top_k_lec = 1
 generate_top_k_qa = 2
@@ -29,108 +32,118 @@ os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
-with open(os.path.join(data_dir, "problems.json"), "r") as f:
-    problems = json.load(f)
-with open(os.path.join(data_dir, "pid_splits.json"), "r") as f:
-    pid_splits = json.load(f)
+problems = json.load(open(os.path.join(data_dir, "problems.json"), "r"))
+pid_splits = json.load(open(os.path.join(data_dir, "pid_splits.json"), "r"))
 
 train_pids = pid_splits['train']
 val_pids = pid_splits['val']
 test_pids = pid_splits['test']
 
 # ===========embedding===========
-def last_pooling(last_hidden_state, attention_mask, normalize=True):
-    sequence_lengths = attention_mask.sum(dim=1) - 1
-    batch_size = last_hidden_state.shape[0]
-    reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
-    if normalize:
-        reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, trust_remote_code=True).cuda()
+model.eval()
+
+def weighted_mean_pooling(hidden, attention_mask):
+    attention_mask_ = attention_mask * attention_mask.cumsum(dim=1)
+    s = torch.sum(hidden * attention_mask_.unsqueeze(-1).float(), dim=1)
+    d = attention_mask_.sum(dim=1, keepdim=True).float()
+    reps = s / d
     return reps
 
-processor = Qwen2_5_VLProcessor.from_pretrained(model_name, use_fast=True)
-model = Qwen2_5_VLModel.from_pretrained(
-    model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
-).eval()
+@torch.no_grad()
+def encode(text_list=None, image_list=None):
+    all_embeddings = []
 
-with open(lecture_path, "r") as f:
-    lecture_corpus = json.load(f)
-with open(example_qa_path, "r") as f:
-    example_qa_corpus = json.load(f)
+    if text_list:
+        inputs_text = {
+            "text": text_list,
+            "image": [None] * len(text_list),
+            "tokenizer": tokenizer
+        }
+        outputs_text = model(**inputs_text)
+        reps_text = weighted_mean_pooling(outputs_text.last_hidden_state, outputs_text.attention_mask)
+        reps_text = F.normalize(reps_text, p=2, dim=1).detach().cpu().numpy()
+        all_embeddings.extend(reps_text)
+
+    if image_list:
+        inputs_image = {
+            "text": [''] * len(image_list),
+            "image": image_list,
+            "tokenizer": tokenizer
+        }
+        outputs_image = model(**inputs_image)
+        reps_image = weighted_mean_pooling(outputs_image.last_hidden_state, outputs_image.attention_mask)
+        reps_image = F.normalize(reps_image, p=2, dim=1).detach().cpu().numpy()
+        all_embeddings.extend(reps_image)
+
+    if not all_embeddings:
+        raise ValueError("At least one of text_list or image_list must be provided.")
+
+    all_embeddings = np.array(all_embeddings)
+    final_embedding = np.mean(all_embeddings, axis=0)
+
+    return final_embedding
+
+lecture_corpus = json.load(open(lecture_path, "r"))
+example_qa_corpus = json.load(open(example_qa_path, "r"))
 
 # Index lecture corpus
-if not os.path.exists(os.path.join(index_dir, "nyx_lecture.faiss")):
+if not os.path.exists(os.path.join(index_dir, "visret_lecture.faiss")):
     embeddings = []
     for item in tqdm(lecture_corpus, desc="Indexing lecture corpus"):
         text = item
-        inputs = processor(text=text, images=None, return_tensors="pt", padding=True).to("cuda")
-        with torch.no_grad():
-            outputs = last_pooling(
-                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-                inputs['attention_mask']
-                )
-            embeddings.append(outputs.float().cpu().numpy())
+        outputs = encode(text_list=[text])
+        embeddings.append(outputs)
     embeddings = np.vstack(embeddings).astype("float32")
     lecture_index = faiss.IndexFlatIP(embeddings.shape[1])
     lecture_index.add(embeddings)
-    faiss.write_index(lecture_index, os.path.join(index_dir, "nyx_lecture.faiss"))
-    print(f"Lecture corpus indexed and saved to {os.path.join(index_dir, 'nyx_lecture.faiss')}")
+    faiss.write_index(lecture_index, os.path.join(index_dir, "visret_lecture.faiss"))
+    print(f"Lecture corpus indexed and saved to {os.path.join(index_dir, 'visret_lecture.faiss')}")
 else:
-    lecture_index = faiss.read_index(os.path.join(index_dir, "nyx_lecture.faiss"))
-    print(f"Lecture corpus loaded from {os.path.join(index_dir, 'nyx_lecture.faiss')}")
-
+    lecture_index = faiss.read_index(os.path.join(index_dir, "visret_lecture.faiss"))
+    print(f"Lecture corpus loaded from {os.path.join(index_dir, 'visret_lecture.faiss')}")
 
 # Index example QA corpus
-if not os.path.exists(os.path.join(index_dir, "nyx_example_qa.faiss")):
+if not os.path.exists(os.path.join(index_dir, "visret_example_qa.faiss")):
     embeddings = []
     for item in tqdm(example_qa_corpus, desc="Indexing example QA corpus"):
-        text = item['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
+        text = item['text'].replace(IMAGE_TOKEN, "")
         if item['image']:
-            image = Image.open(os.path.join(data_dir,"images", item['image']))
+            image = Image.open(os.path.join(data_dir, "images", item['image'])).convert("RGB")
             images = [image]
         else:
             images = None
-        inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            outputs = last_pooling(
-                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-                inputs['attention_mask']
-                )
-            embeddings.append(outputs.float().cpu().numpy())
+        outputs = encode(text_list=[text], image_list=images)
+        embeddings.append(outputs)
     embeddings = np.vstack(embeddings).astype("float32")
     example_qa_index = faiss.IndexFlatIP(embeddings.shape[1])
     example_qa_index.add(embeddings)
-    faiss.write_index(example_qa_index, os.path.join(index_dir, "nyx_example_qa.faiss"))
-    print(f"Example QA corpus indexed and saved to {os.path.join(index_dir, 'nyx_example_qa.faiss')}")
+    faiss.write_index(example_qa_index, os.path.join(index_dir, "visret_example_qa.faiss"))
+    print(f"Example QA corpus indexed and saved to {os.path.join(index_dir, 'visret_example_qa.faiss')}")
 else:
-    example_qa_index = faiss.read_index(os.path.join(index_dir, "nyx_example_qa.faiss"))
-    print(f"Example QA corpus loaded from {os.path.join(index_dir, 'nyx_example_qa.faiss')}")
+    example_qa_index = faiss.read_index(os.path.join(index_dir, "visret_example_qa.faiss"))
+    print(f"Example QA corpus loaded from {os.path.join(index_dir, 'visret_example_qa.faiss')}")
 
 # ===========retrieving===========
 def retrieve(index, corpus, text, images, top_k=10):
-    inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-    with torch.no_grad():
-        query_embedding = last_pooling(
-            model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-            inputs['attention_mask']
-        ).float().cpu().numpy()
-    _, I = index.search(query_embedding, top_k)
+    query_embedding = encode(text_list=[text], image_list=images)
+    _, I = index.search(query_embedding.reshape(1, -1), top_k)
     return [corpus[i] for i in I[0]]
 
 retrieved = []
-for pid in tqdm(test_pids, desc="Retrieving test set"):
+for pid in tqdm(test_pids, desc="Retrieving"):
     item = problems[pid]
     question = item["question"]
     choices = item["choices"]
     image = item["image"]
     
+    question += f"\nChoices: " + ", ".join(choices)
     if image:
         image_path = f"{data_dir}/images/test/{pid}/{image}"
         images = [Image.open(image_path)]
-        question = "<|vision_start|><|image_pad|><|vision_end|>" + question
     else:
         images = None
-
-    question += f"\nChoices: {', '.join(choices)}"
 
     # retrieve lectures
     text = f"Please retrieve the most relevant lecture to answer the question:\n Question: {question}"
@@ -158,14 +171,11 @@ for pid in tqdm(test_pids, desc="Retrieving test set"):
 
     retrieved.append(item)
 
-
 with open(f"{retrieved_dir}/test_retrieved_docs.json", "w") as f:
     json.dump(retrieved, f, indent=2, ensure_ascii=False)
-print(f"Saved: {retrieved_dir}/test_retrieved_docs.json")
+print(f"Retrieved docs saved: {retrieved_dir}/test_retrieved_docs.json")
 
-del model, processor
-torch.cuda.empty_cache()
-torch.cuda.ipc_collect()
+del model, tokenizer
 
 # ===========generating===========
 

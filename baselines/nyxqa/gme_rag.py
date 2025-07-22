@@ -1,28 +1,30 @@
-import torch
-import json
+from transformers import AutoModel, AutoProcessor
+from transformers import Qwen2VLProcessor,  Qwen2_5_VLModel
+from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLModel
+from PIL import Image
 import os
+import json
 import numpy as np
 import faiss
 from tqdm import tqdm
+import torch
 from eval_utils import evaluate
-from PIL import Image
 from generator import MMGenerator
-
-from torch import Tensor
-from transformers import AutoTokenizer, AutoModel
+from qwen_vl_utils import process_vision_info
 
 IMAGE_TOKEN = "<|image|>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 # ===========configuration===========
-model_name = "/fs/archive/share/e5-base-v2"
+
+model_name = "/fs/archive/share/gme-Qwen2-VL-2B-Instruct"
 dataset_dir = "/fs/archive/share/mm_datasets/NyxQA"
 image_dir = "/fs/archive/share/mm_datasets/NyxQA/images"
 
-index_path = "index/e5.faiss"
+index_path = "index/gme.faiss"
 index_dir = "index"
-retrieved_dir = "retrieved/e5"
-generated_dir = "generated/e5"
+retrieved_dir = "retrieved/gme"
+generated_dir = "generated/gme"
 retrieve_top_k = 10
 generate_top_k = 1
 
@@ -31,83 +33,63 @@ os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
 # ===========embedding===========
-def average_pool(last_hidden_states: Tensor,
-                 attention_mask: Tensor) -> Tensor:
-    last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-    return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name).to("cuda")
+model_path = "/fs/archive/share/gme-Qwen2-VL-2B-Instruct"
+model = AutoModel.from_pretrained(
+    model_path,
+    torch_dtype="float16", device_map='cuda', trust_remote_code=True
+)
 
 corpus = json.load(open(os.path.join(dataset_dir, "corpus.json"), "r"))
-captions = json.load(open(os.path.join(dataset_dir, "nyx_caption.json"), "r"))
 
 if not os.path.exists(index_path):
     embeddings = []
     for item in tqdm(corpus, desc="Indexing"):
-        text = item['text']
-        images = item['images']
-
-        for i, image in enumerate(images):
-            caption = captions[image.split('.')[0]]
-            text.replace(IMAGE_TOKEN, caption, 1)
-
-        input_texts = [text]  # Assuming item is a single text entry
-        batch_dict = tokenizer(
-            input_texts, 
-            max_length=512, 
-            padding=True, 
-            truncation=True, 
-            return_tensors='pt').to(model.device)
-        with torch.no_grad():
-            outputs = model(**batch_dict)
-            output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
-            embeddings.append(output_embedding.float().cpu().numpy())
-
-    embeddings = np.array(embeddings).astype(np.float32)
+        text = item['text'].replace(IMAGE_TOKEN, "")
+        # Only encode the first image
+        if item['images']:
+            image = Image.open(os.path.join(image_dir, item['images'][0])).convert("RGB")
+            images = [image]
+        else:
+            images = None
+        outputs = model.get_fused_embeddings(texts=[text], images=images)
+        embeddings.append(outputs)
+    
+    embeddings = np.vstack(embeddings).astype("float32")
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
     faiss.write_index(index, index_path)
+    print(f"Index saved to {index_path}")
 else:
     index = faiss.read_index(index_path)
     print(f"Index loaded from {index_path}")
 
 # ===========retrieval===========
-def retrieve(index, corpus, query, top_k=10):
-    input_texts = [query]
-    batch_dict = tokenizer(
-        input_texts, 
-        max_length=512, 
-        padding=True, 
-        truncation=True, 
-        return_tensors='pt').to(model.device)
-    
-    with torch.no_grad():
-        outputs = model(**batch_dict)
-        output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
-        query_embedding = output_embedding.float().cpu().numpy()
-    
+def retrieve(index, corpus, text, images, top_k=10):
+    query_embedding = model.get_fused_embeddings(texts=[text], images=images)
     _, I = index.search(query_embedding.reshape(1, -1), top_k)
     return [corpus[i] for i in I[0]]
 
 test_data = json.load(open(os.path.join(dataset_dir, "test.json"), "r"))
 
-for item in tqdm(test_data, desc="Retrieving documents for test"):
+for item in tqdm(test_data, desc="Retrieving"):
     question = item['qry']
     choices = item['choices']
     image_paths = item['qry_image_path']
 
     text = "Please retrieve the most relevant document to answer the question.\nQuestion: " + question
     text = text + "\nChoices: " + ", ".join(choices)
-    
-    for i, image_path in enumerate(image_paths):
-        caption = captions[image_path.split('.')[0]]
-        text = text.replace(IMAGE_TOKEN, caption, 1)
+    text = text.replace(IMAGE_TOKEN, "")
+
+    if image_paths:
+        images = [Image.open(os.path.join(image_dir, image_paths[0])).convert("RGB")]
+    else:
+        images = None
 
     item['retrieved_docs'] = retrieve(
         index=index,
         corpus=corpus,
-        query=text,
+        text=text,
+        images=images,
         top_k=retrieve_top_k
     )
 

@@ -15,13 +15,13 @@ from qwen_vl_utils import process_vision_info
 
 # ===========configuration===========
 
-model_name = "/fs/archive/share/Nyx-3B-Pretrained"
+model_name = "/fs/archive/share/Nyx-3B-Feedback0"
 corpus_path = "mmqa_corpus_with_captions.json"
-index_path = "index/nyx.faiss"
+index_path = "index/nyx_fb.faiss"
 
 index_dir = "index"
-retrieved_dir = "retrieved/nyx"
-generated_dir = "generated/nyx"
+retrieved_dir = "retrieved/nyx_fb"
+generated_dir = "generated/nyx_fb"
 retrieve_top_k = 10
 generate_top_k = 1
 
