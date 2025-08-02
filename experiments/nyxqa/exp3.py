@@ -7,34 +7,25 @@ from tqdm import tqdm
 from eval_utils import evaluate
 from PIL import Image
 from generator import MMGenerator
-from transformers import AutoModelForCausalLM, AutoProcessor
-from qwen_vl_utils import process_vision_info
+import argparse
+from transformers import MllamaForConditionalGeneration, AutoProcessor
 
-IMAGE_TOKEN = "<|image|>"
-PHI_IMAGE_TOKEN = "<|image_1|>"
-QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
-
-def process_images(images):
-    if not images:
-        return None
-    pseudo_message = [{
-        "content": [{"type": "image", "image": image} for image in images]
-    }]
-    images, _ = process_vision_info(pseudo_message)
-    return images
+# ===========args===========
+parser = argparse.ArgumentParser()
+parser.add_argument("--generate_top_k", type=int, required=True, help="Number of documents to generate answers from")
+args = parser.parse_args()
 
 # ===========configuration===========
 
-model_name = "/fs/archive/share/VLM2Vec-Full"
+model_name = "/fs/archive/share/mmE5-mllama-11b-instruct"
 dataset_dir = "/fs/archive/share/mm_datasets/NyxQA"
 image_dir = "/fs/archive/share/mm_datasets/NyxQA/images"
-
-index_path = "index/vlm2vec.faiss"
+index_path = "index/mmE5.faiss"
+retrieved_dir = "retrieved/mmE5"
+generated_dir = "generated/mmE5"
 index_dir = "index"
-retrieved_dir = "retrieved/vlm2vec"
-generated_dir = "generated/vlm2vec"
-retrieve_top_k = 10
-generate_top_k = 1
+retrieve_top_k = 16
+generate_top_k = args.generate_top_k
 
 os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
@@ -49,31 +40,23 @@ def last_pooling(last_hidden_state, attention_mask, normalize=True):
         reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
     return reps
 
-processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    device_map="auto",
-    trust_remote_code=True,
-    torch_dtype="auto",
-    _attn_implementation="flash_attention_2"
-)
+processor = AutoProcessor.from_pretrained(model_name)
+model = MllamaForConditionalGeneration.from_pretrained(
+    model_name, torch_dtype=torch.bfloat16
+).to("cuda")
 model.eval()
 
-corpus = json.load(open(os.path.join(dataset_dir, "corpus.json"), "r"))
+with open(os.path.join(dataset_dir, "corpus.json"), "r") as f:
+    corpus = json.load(f)
 
 if not os.path.exists(index_path):
     embeddings = []
     for item in tqdm(corpus, desc="Indexing"):
         text = item['text']
-        
-        images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in item['images']]
-        images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in item['images']]
-        images = process_images(images)
-
-        n_images = text.count(IMAGE_TOKEN)
-        for idx in range(1, n_images + 1):
-            text = text.replace(IMAGE_TOKEN, f"<|image_{idx}|>", 1)
-
+        if item['images']:
+            images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in item['images']]
+        else:
+            images = None
         inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
         with torch.no_grad():
             outputs = last_pooling(
@@ -81,6 +64,7 @@ if not os.path.exists(index_path):
                 inputs['attention_mask']
                 )
         embeddings.append(outputs.float().cpu().numpy())
+    
     embeddings = np.vstack(embeddings).astype("float32")
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
@@ -90,7 +74,8 @@ else:
     index = faiss.read_index(index_path)
     print(f"Index loaded from {index_path}")
 
-# ===========retrieval===========
+# # ===========retrieval===========
+
 def retrieve(index, corpus, text, images, top_k=10):
     inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
     with torch.no_grad():
@@ -111,14 +96,11 @@ for item in tqdm(test_data, desc="Retrieving documents for test"):
 
     text = "Please retrieve the most relevant document to answer the question.\nQuestion: " + question
     text = text + "\nChoices: " + ", ".join(choices)
-    
 
-    images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in image_paths]
-    images = process_images(images)
-
-    n_images = text.count(IMAGE_TOKEN)
-    for idx in range(1, n_images + 1):
-        text = text.replace(IMAGE_TOKEN, f"<|image_{idx}|>", 1)
+    if image_paths:
+        images = [Image.open(os.path.join(image_dir, path)).convert("RGBA") for path in image_paths]
+    else:
+        images = None
 
     item['retrieved_docs'] = retrieve(
         index=index,
@@ -127,11 +109,10 @@ for item in tqdm(test_data, desc="Retrieving documents for test"):
         images=images,
         top_k=retrieve_top_k
     )
-
+    
 with open(os.path.join(retrieved_dir, "test_retrieved_docs.json"), "w") as f:
     json.dump(test_data, f, indent=2, ensure_ascii=False)
 print(f"Retrieved docs saved: {retrieved_dir}/test_retrieved_docs.json")
-
 
 # ===========generation===========
 
@@ -145,13 +126,13 @@ for item in tqdm(test_data, desc="Generating answers for test"):
     choices = item["choices"]
 
     text = f"Question: {question}\nChoices: {', '.join(choices)}"
-    text = text.replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
+    text = text.replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
 
     retrieved_docs = item["retrieved_docs"]
 
     docs = []
     for doc in retrieved_docs[:generate_top_k]:
-        doc_text = doc['text'].replace(IMAGE_TOKEN, QWEN_IMAGE_TOKEN)
+        doc_text = doc['text'].replace("<|image|>", "<|vision_start|><|image_pad|><|vision_end|>")
         docs.append(doc_text)
     
     images = []
@@ -164,8 +145,8 @@ for item in tqdm(test_data, desc="Generating answers for test"):
         for image_path in item['qry_image_path']:
             image = Image.open(os.path.join(image_dir, image_path)).convert("RGBA")
             images.append(image)
-    
-    images = process_images(images)
+    if not images:
+        images = None
     
     answer = vlm.generate(
         docs=docs,
@@ -175,10 +156,10 @@ for item in tqdm(test_data, desc="Generating answers for test"):
 
     item["generated_answer"] = answer
 
-with open(os.path.join(generated_dir, "test_generated_answers.json"), "w") as f:
+with open(os.path.join(generated_dir, f"test_generated_answers_{generate_top_k}.json"), "w") as f:
     json.dump(test_data, f, indent=2, ensure_ascii=False)
-print(f"Generated answers saved to {generated_dir}/test_generated_answers.json")
+print(f"Generated answers saved to {generated_dir}/test_generated_answers_{generate_top_k}.json")
 
 # ============evaluation============
 
-evaluate(os.path.join(generated_dir, "test_generated_answers.json"))
+evaluate(os.path.join(generated_dir, f"test_generated_answers_{generate_top_k}.json"))

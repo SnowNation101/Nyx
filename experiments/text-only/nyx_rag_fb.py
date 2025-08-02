@@ -1,84 +1,71 @@
 import json
 import os
 import numpy as np
-from transformers import AutoModel, AutoTokenizer
 import torch
-import torch.nn.functional as F
 import faiss
 from tqdm import tqdm
 from datasets import load_dataset
 from collections import Counter
 import re
 import string
+
+from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
+from peft import PeftModel
 from generator import MMGenerator
 
 # ===========configuration===========
+dataset_path = "/fs/archive/share/mm_datasets/Nyx-T2T-Data"
 subsets = ["hotpotqa", "2wikimultihopqa", "bamboogle", "musique"]
 split = "test"
 corpus_path = "t2t_corpus.json"
-index_path = "index/visret.faiss"
-dataset_path = "/fs/archive/share/mm_datasets/Nyx-T2T-Data"
-retrieved_dir = "retrieved/visret"
-generated_dir = "generated/visret"
+
+index_path = "index/nyx_fb.faiss"
+index_dir = "index"
+retrieved_dir = "retrieved/nyx_fb"
+generated_dir = "generated/nyx_fb"
 top_k = 1
 
 os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
+os.makedirs(index_dir, exist_ok=True)
 
 # ===========embedding===========
-model_name = "/fs/archive/share/VisRAG-Ret"
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, trust_remote_code=True).cuda()
-model.eval()
-
-def weighted_mean_pooling(hidden, attention_mask):
-    attention_mask_ = attention_mask * attention_mask.cumsum(dim=1)
-    s = torch.sum(hidden * attention_mask_.unsqueeze(-1).float(), dim=1)
-    d = attention_mask_.sum(dim=1, keepdim=True).float()
-    reps = s / d
+def last_pooling(last_hidden_state, attention_mask, normalize=True):
+    sequence_lengths = attention_mask.sum(dim=1) - 1
+    batch_size = last_hidden_state.shape[0]
+    reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
+    if normalize:
+        reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
     return reps
 
-@torch.no_grad()
-def encode(text_list=None, image_list=None):
-    all_embeddings = []
+print("Loading model and processor...")
+ckpt_path = "/fs/archive/share/nyx-ckpt/ft_2025-07-29-2341.31"
+processor = Qwen2_5_VLProcessor.from_pretrained("/fs/archive/share/Qwen2.5-VL-3B-Instruct")
+base_model = Qwen2_5_VLModel.from_pretrained(
+    "/fs/archive/share/Qwen2.5-VL-3B-Instruct",
+    torch_dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    device_map="auto",
+)
+model = PeftModel.from_pretrained(
+    base_model,
+    ckpt_path,
+)
+model.eval()
 
-    if text_list:
-        inputs_text = {
-            "text": text_list,
-            "image": [None] * len(text_list),
-            "tokenizer": tokenizer
-        }
-        outputs_text = model(**inputs_text)
-        reps_text = weighted_mean_pooling(outputs_text.last_hidden_state, outputs_text.attention_mask)
-        reps_text = F.normalize(reps_text, p=2, dim=1).detach().cpu().numpy()
-        all_embeddings.extend(reps_text)
 
-    if image_list:
-        inputs_image = {
-            "text": [''] * len(image_list),
-            "image": image_list,
-            "tokenizer": tokenizer
-        }
-        outputs_image = model(**inputs_image)
-        reps_image = weighted_mean_pooling(outputs_image.last_hidden_state, outputs_image.attention_mask)
-        reps_image = F.normalize(reps_image, p=2, dim=1).detach().cpu().numpy()
-        all_embeddings.extend(reps_image)
-
-    if not all_embeddings:
-        raise ValueError("At least one of text_list or image_list must be provided.")
-
-    all_embeddings = np.array(all_embeddings)
-    final_embedding = np.mean(all_embeddings, axis=0)
-
-    return final_embedding
-
-corpus = json.load(open(corpus_path, "r"))
+with open(corpus_path, "r") as f:
+    corpus = json.load(f)
 
 if not os.path.exists(index_path):
     embeddings = []
     for item in tqdm(corpus, desc="Indexing"):
-        outputs = encode(text_list=[item])
-        embeddings.append(outputs)
+        inputs = processor(text=item, images=None, return_tensors="pt").to("cuda")
+        with torch.no_grad():
+            outputs = last_pooling(
+                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+                inputs['attention_mask'])
+            embeddings.append(outputs.float().cpu().numpy())
     embeddings = np.vstack(embeddings).astype("float32")
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
@@ -88,10 +75,14 @@ else:
     index = faiss.read_index(index_path)
     print(f"Index loaded from {index_path}")
 
-
 # ===========retrieving===========
-def retrieve(index, corpus, text, top_k=10):
-    query_embedding = encode(text_list=[text]).reshape(1, -1)
+def retrieve(index, corpus, query, top_k=10):
+    inputs = processor(text=query, images=None, return_tensors="pt").to("cuda")
+    with torch.no_grad():
+        query_embedding = last_pooling(
+            model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+            inputs['attention_mask']
+        ).float().cpu().numpy()
     _, I = index.search(query_embedding, top_k)
     return [corpus[i] for i in I[0]]
 
@@ -100,17 +91,20 @@ for subset in subsets:
     dataset = load_dataset(dataset_path, subset, split=split)
     results = []
     for item in tqdm(dataset, desc=f"retrieving {subset}"):
-        text = item['qry']
-        item["retrieved_docs"] = retrieve(index, corpus, text)
+        question = item["qry"]
+        question = "Please retrieve the most relevant document to answer the question.\n" + question
+        item["retrieved_docs"] = retrieve(index, corpus, item["qry"])
         results.append(dict(item))
     with open(f"{retrieved_dir}/{subset}_retrieved_docs.json", "w") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"Retrieved documents for {subset} saved to {retrieved_dir}/{subset}_retrieved_docs.json")
+        json.dump(results, f, indent=2, ensure_ascii=True)
+    print(f"Saved: {retrieved_dir}/{subset}_retrieved_docs.json")
 
-del model, tokenizer
+del processor
+del model
+torch.cuda.empty_cache()
+torch.cuda.ipc_collect()
 
-# ===========generation===========
-
+# ===========generating===========
 vlm = MMGenerator(model_path="/fs/archive/share/Qwen2.5-VL-7B-Instruct")
 
 for subset in subsets:

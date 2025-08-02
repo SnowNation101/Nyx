@@ -195,3 +195,5 @@ try.py
 try_load.py
 test_new.py
 load_nyx.py
+check_fb.py
+check_token.py

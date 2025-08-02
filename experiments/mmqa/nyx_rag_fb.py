@@ -10,18 +10,17 @@ import string
 from PIL import Image
 from generator import MMGenerator
 
+from peft import PeftModel
 from transformers import Qwen2_5_VLModel, Qwen2_5_VLProcessor
 from qwen_vl_utils import process_vision_info
 
 # ===========configuration===========
-
-model_name = "/fs/archive/share/Nyx-3B-Pretrained"
 corpus_path = "mmqa_corpus_with_captions.json"
-index_path = "index/nyx.faiss"
+index_path = "index/nyx_fb.faiss"
 
 index_dir = "index"
-retrieved_dir = "retrieved/nyx"
-generated_dir = "generated/nyx"
+retrieved_dir = "retrieved/nyx_fb"
+generated_dir = "generated/nyx_fb"
 retrieve_top_k = 10
 generate_top_k = 1
 
@@ -48,10 +47,19 @@ def last_pooling(last_hidden_state, attention_mask, normalize=True):
         reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
     return reps
 
-processor = Qwen2_5_VLProcessor.from_pretrained(model_name, use_fast=True)
-model = Qwen2_5_VLModel.from_pretrained(
-    model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
-).eval()
+ckpt_path = "/fs/archive/share/nyx-ckpt/ft_2025-07-29-2341.31"
+processor = Qwen2_5_VLProcessor.from_pretrained("/fs/archive/share/Qwen2.5-VL-3B-Instruct")
+base_model = Qwen2_5_VLModel.from_pretrained(
+    "/fs/archive/share/Qwen2.5-VL-3B-Instruct",
+    torch_dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    device_map="auto",
+)
+model = PeftModel.from_pretrained(
+    base_model,
+    ckpt_path,
+)
+model.eval()
 
 with open(corpus_path, "r") as f:
     corpus = json.load(f)

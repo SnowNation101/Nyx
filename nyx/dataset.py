@@ -24,7 +24,7 @@ MLLAMA_IMAGE_TOKEN = "<|image|>"
 QWEN_IMAGE_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
 qwen_min_pixels = 4 * 28 * 28
-qwen_max_pixels = 640 * 28 * 28
+qwen_max_pixels = 400 * 28 * 28
 
 class TrainDataset(Dataset):
 
@@ -162,7 +162,7 @@ class TrainDataset(Dataset):
         if not img_path:
             return None
         full_img_path = os.path.join(self.data_args.image_dir, img_path)
-        image = Image.open(full_img_path)
+        image = Image.open(full_img_path).convert("RGBA")
         if self.model_args.model_backbone == "mllama":
             if image.size[1] == 1:
                 image = image.resize((image.size[0], 2))

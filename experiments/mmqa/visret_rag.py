@@ -31,96 +31,96 @@ os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
-# ===========embedding===========
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, trust_remote_code=True).cuda()
-model.eval()
+# # ===========embedding===========
+# tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+# model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, trust_remote_code=True).cuda()
+# model.eval()
 
-def weighted_mean_pooling(hidden, attention_mask):
-    attention_mask_ = attention_mask * attention_mask.cumsum(dim=1)
-    s = torch.sum(hidden * attention_mask_.unsqueeze(-1).float(), dim=1)
-    d = attention_mask_.sum(dim=1, keepdim=True).float()
-    reps = s / d
-    return reps
+# def weighted_mean_pooling(hidden, attention_mask):
+#     attention_mask_ = attention_mask * attention_mask.cumsum(dim=1)
+#     s = torch.sum(hidden * attention_mask_.unsqueeze(-1).float(), dim=1)
+#     d = attention_mask_.sum(dim=1, keepdim=True).float()
+#     reps = s / d
+#     return reps
 
-@torch.no_grad()
-def encode(text_list=None, image_list=None):
-    all_embeddings = []
+# @torch.no_grad()
+# def encode(text_list=None, image_list=None):
+#     all_embeddings = []
 
-    if text_list:
-        inputs_text = {
-            "text": text_list,
-            "image": [None] * len(text_list),
-            "tokenizer": tokenizer
-        }
-        outputs_text = model(**inputs_text)
-        reps_text = weighted_mean_pooling(outputs_text.last_hidden_state, outputs_text.attention_mask)
-        reps_text = F.normalize(reps_text, p=2, dim=1).detach().cpu().numpy()
-        all_embeddings.extend(reps_text)
+#     if text_list:
+#         inputs_text = {
+#             "text": text_list,
+#             "image": [None] * len(text_list),
+#             "tokenizer": tokenizer
+#         }
+#         outputs_text = model(**inputs_text)
+#         reps_text = weighted_mean_pooling(outputs_text.last_hidden_state, outputs_text.attention_mask)
+#         reps_text = F.normalize(reps_text, p=2, dim=1).detach().cpu().numpy()
+#         all_embeddings.extend(reps_text)
 
-    if image_list:
-        inputs_image = {
-            "text": [''] * len(image_list),
-            "image": image_list,
-            "tokenizer": tokenizer
-        }
-        outputs_image = model(**inputs_image)
-        reps_image = weighted_mean_pooling(outputs_image.last_hidden_state, outputs_image.attention_mask)
-        reps_image = F.normalize(reps_image, p=2, dim=1).detach().cpu().numpy()
-        all_embeddings.extend(reps_image)
+#     if image_list:
+#         inputs_image = {
+#             "text": [''] * len(image_list),
+#             "image": image_list,
+#             "tokenizer": tokenizer
+#         }
+#         outputs_image = model(**inputs_image)
+#         reps_image = weighted_mean_pooling(outputs_image.last_hidden_state, outputs_image.attention_mask)
+#         reps_image = F.normalize(reps_image, p=2, dim=1).detach().cpu().numpy()
+#         all_embeddings.extend(reps_image)
 
-    if not all_embeddings:
-        raise ValueError("At least one of text_list or image_list must be provided.")
+#     if not all_embeddings:
+#         raise ValueError("At least one of text_list or image_list must be provided.")
 
-    all_embeddings = np.array(all_embeddings)
-    final_embedding = np.mean(all_embeddings, axis=0)
+#     all_embeddings = np.array(all_embeddings)
+#     final_embedding = np.mean(all_embeddings, axis=0)
 
-    return final_embedding
+#     return final_embedding
 
-corpus = json.load(open(corpus_path, "r"))
+# corpus = json.load(open(corpus_path, "r"))
 
-if not os.path.exists(index_path):
-    embeddings = []
-    for item in tqdm(corpus, desc="Indexing"):
-        text = item['text'].replace(IMAGE_TOKEN, "")
-        if item['image']:
-            image = Image.open(os.path.join(image_dir, item['image'])).convert("RGB")
-            images = [image]
-        else:
-            images = None
-        outputs = encode(text_list=[text], image_list=images)
-        embeddings.append(outputs)
-    embeddings = np.vstack(embeddings).astype("float32")
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
-    faiss.write_index(index, index_path)
-    print(f"Index saved to {index_path}")
-else:
-    index = faiss.read_index(index_path)
-    print(f"Index loaded from {index_path}")
+# if not os.path.exists(index_path):
+#     embeddings = []
+#     for item in tqdm(corpus, desc="Indexing"):
+#         text = item['text'].replace(IMAGE_TOKEN, "")
+#         if item['image']:
+#             image = Image.open(os.path.join(image_dir, item['image'])).convert("RGB")
+#             images = [image]
+#         else:
+#             images = None
+#         outputs = encode(text_list=[text], image_list=images)
+#         embeddings.append(outputs)
+#     embeddings = np.vstack(embeddings).astype("float32")
+#     index = faiss.IndexFlatIP(embeddings.shape[1])
+#     index.add(embeddings)
+#     faiss.write_index(index, index_path)
+#     print(f"Index saved to {index_path}")
+# else:
+#     index = faiss.read_index(index_path)
+#     print(f"Index loaded from {index_path}")
 
-# ===========retrieving===========
-def retrieve(index, corpus, text, images, top_k=10):
-    query_embedding = encode(text_list=[text], image_list=images)
-    _, I = index.search(query_embedding.reshape(1, -1), top_k)
-    return [corpus[i] for i in I[0]]
+# # ===========retrieving===========
+# def retrieve(index, corpus, text, images, top_k=10):
+#     query_embedding = encode(text_list=[text], image_list=images)
+#     _, I = index.search(query_embedding.reshape(1, -1), top_k)
+#     return [corpus[i] for i in I[0]]
 
-with open("/fs/archive/share/mm_datasets/MMQA/MMQA_dev.jsonl", "r") as f:
-    dataset = [json.loads(line) for line in f]
+# with open("/fs/archive/share/mm_datasets/MMQA/MMQA_dev.jsonl", "r") as f:
+#     dataset = [json.loads(line) for line in f]
 
-for item in tqdm(dataset, desc=f"Retrieving dev set"):
-    question = item["question"]
-    item['retrieved_docs'] = retrieve(
-        index=index,
-        corpus=corpus,
-        text=question,
-        images=None,
-        top_k=retrieve_top_k
-    )
+# for item in tqdm(dataset, desc=f"Retrieving dev set"):
+#     question = item["question"]
+#     item['retrieved_docs'] = retrieve(
+#         index=index,
+#         corpus=corpus,
+#         text=question,
+#         images=None,
+#         top_k=retrieve_top_k
+#     )
 
-with open(f"{retrieved_dir}/dev_retrieved_docs.json", "w") as f:
-    json.dump(dataset, f, indent=2, ensure_ascii=False)
-print(f"Saved: {retrieved_dir}/dev_retrieved_docs.json")
+# with open(f"{retrieved_dir}/dev_retrieved_docs.json", "w") as f:
+#     json.dump(dataset, f, indent=2, ensure_ascii=False)
+# print(f"Saved: {retrieved_dir}/dev_retrieved_docs.json")
 
 # ===========generating===========
 

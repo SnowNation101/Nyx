@@ -12,19 +12,19 @@ class MMGenerator:
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
             device_map="auto",
-        )
+        ).eval()
         self.processor = AutoProcessor.from_pretrained(model_path, use_fast=True)
 
     def _build_messages(self, docs: List[str], question: str) -> List[dict]:
         """Constructs the prompt messages for the model."""
         base_system_prompt = (
-            "Answer the question based on the given document. "
+            "Answer the question based on the given documents. "
             "Only give me the answer and do not output any other words.\n"
             "The following are given documents."
         )
         user_content = [
             {"type": "text", "text": f"{doc}\n\n"} for doc in docs
-        ] + [{"type": "text", "text": f"Question: {question}"}]
+        ] + [{"type": "text", "text": question}]
 
         return [
             {"role": "system", "content": base_system_prompt},
@@ -32,10 +32,13 @@ class MMGenerator:
         ]
 
     def _prepare_images(self, images: Optional[List[Image.Image]]) -> Optional[List[dict]]:
-        """Preprocess images if provided."""
         if not images:
             return None
-        return process_vision_info([{"type": "image", "image": img} for img in images])
+        pseudo_message = [{
+            "content": [{"type": "image", "image": image} for image in images]
+        }]
+        images, _ = process_vision_info(pseudo_message)
+        return images
 
     def generate(
         self,
@@ -49,6 +52,7 @@ class MMGenerator:
             messages, tokenize=False, add_generation_prompt=True
         )
         image_inputs = self._prepare_images(images)
+        
         inputs = self.processor(
             text=prompt,
             images=image_inputs,
@@ -56,13 +60,14 @@ class MMGenerator:
             padding=True,
         ).to("cuda")
 
-        generated_ids = self.vlm.generate(
-            **inputs,
-            max_new_tokens=4096,
-            do_sample=True,
-            temperature=0.1,
-            top_p=0.001,
-        )
+        with torch.no_grad():
+            generated_ids = self.vlm.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=True,
+                temperature=0.1,
+                top_p=0.001,
+            )
         generated_ids_trimmed = [
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]

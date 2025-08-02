@@ -63,6 +63,8 @@ inputs = processor(
     images=image_inputs,
     videos=video_inputs,
     padding=True,
+    truncation=True,
+    max_length=3000,
     return_tensors="pt",
 )
 

@@ -29,79 +29,77 @@ os.makedirs(retrieved_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 
 # ===========embedding===========
-def average_pool(last_hidden_states: Tensor,
-                 attention_mask: Tensor) -> Tensor:
-    last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-    return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+# def average_pool(last_hidden_states: Tensor,
+#                  attention_mask: Tensor) -> Tensor:
+#     last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
+#     return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name).to("cuda")
-
-
-with open(corpus_path, "r") as f:
-    corpus = json.load(f)
-
-if not os.path.exists(index_path):
-    embeddings = []
-    for item in tqdm(corpus, desc="Indexing"):
-        input_texts = [item]  # Assuming item is a single text entry
-        batch_dict = tokenizer(
-            input_texts, 
-            max_length=512, 
-            padding=True, 
-            truncation=True, 
-            return_tensors='pt').to(model.device)
-        with torch.no_grad():
-            outputs = model(**batch_dict)
-            output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
-            embeddings.append(output_embedding.float().cpu().numpy())
-
-    embeddings = np.vstack(embeddings).astype("float32")
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
-    faiss.write_index(index, index_path)
-    print(f"Index saved to {index_path}")
-else:
-    index = faiss.read_index(index_path)
-    print(f"Index loaded from {index_path}")
-
-# ===========retrieval===========
+# tokenizer = AutoTokenizer.from_pretrained(model_name)
+# model = AutoModel.from_pretrained(model_name).to("cuda")
 
 
-def retrieve(index, corpus, query, top_k=10):
-    input_texts = [query]
-    batch_dict = tokenizer(
-        input_texts, 
-        max_length=512, 
-        padding=True, 
-        truncation=True, 
-        return_tensors='pt').to(model.device)
+# with open(corpus_path, "r") as f:
+#     corpus = json.load(f)
+
+# if not os.path.exists(index_path):
+#     embeddings = []
+#     for item in tqdm(corpus, desc="Indexing"):
+#         input_texts = [item]  # Assuming item is a single text entry
+#         batch_dict = tokenizer(
+#             input_texts, 
+#             max_length=512, 
+#             padding=True, 
+#             truncation=True, 
+#             return_tensors='pt').to(model.device)
+#         with torch.no_grad():
+#             outputs = model(**batch_dict)
+#             output_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0]
+#             embeddings.append(output_embedding.float().cpu().numpy())
+
+#     embeddings = np.vstack(embeddings).astype("float32")
+#     index = faiss.IndexFlatIP(embeddings.shape[1])
+#     index.add(embeddings)
+#     faiss.write_index(index, index_path)
+#     print(f"Index saved to {index_path}")
+# else:
+#     index = faiss.read_index(index_path)
+#     print(f"Index loaded from {index_path}")
+
+# # ===========retrieval===========
+# def retrieve(index, corpus, query, top_k=10):
+#     input_texts = [query]
+#     batch_dict = tokenizer(
+#         input_texts, 
+#         max_length=512, 
+#         padding=True, 
+#         truncation=True, 
+#         return_tensors='pt').to(model.device)
     
-    with torch.no_grad():
-        outputs = model(**batch_dict)
-        query_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0].float().cpu().numpy()
+#     with torch.no_grad():
+#         outputs = model(**batch_dict)
+#         query_embedding = average_pool(outputs.last_hidden_state, batch_dict['attention_mask'])[0].float().cpu().numpy()
     
-    _, I = index.search(query_embedding.reshape(1, -1), top_k)
-    return [corpus[i] for i in I[0]]
+#     _, I = index.search(query_embedding.reshape(1, -1), top_k)
+#     return [corpus[i] for i in I[0]]
 
-for subset in subsets:
-    print(f"\nProcessing {subset} retrieval...")
+# for subset in subsets:
+#     print(f"\nProcessing {subset} retrieval...")
     
-    dataset = load_dataset(dataset_path, subset, split=split)
-    results = []
+#     dataset = load_dataset(dataset_path, subset, split=split)
+#     results = []
     
-    for item in tqdm(dataset, desc=f"retrieving {subset}"):
-        item["retrieved_docs"] = retrieve(index, corpus, item["qry"], top_k=top_k)
-        results.append(dict(item))
+#     for item in tqdm(dataset, desc=f"retrieving {subset}"):
+#         item["retrieved_docs"] = retrieve(index, corpus, item["qry"])
+#         results.append(dict(item))
     
-    output_path = f"{retrieved_dir}/{subset}_retrieved_docs.json"
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"Saved: {output_path}")
+#     output_path = f"{retrieved_dir}/{subset}_retrieved_docs.json"
+#     with open(output_path, "w") as f:
+#         json.dump(results, f, indent=2, ensure_ascii=False)
+#     print(f"Saved: {output_path}")
 
-del tokenizer, model, index
-torch.cuda.empty_cache()
-torch.cuda.ipc_collect()
+# del tokenizer, model, index
+# torch.cuda.empty_cache()
+# torch.cuda.ipc_collect()
 
 # ===========generation===========
 
@@ -112,7 +110,9 @@ for subset in subsets:
         dataset = json.load(f)
     for item in tqdm(dataset, desc=f"generating {subset} answers"):
         question = item["qry"]
+        question = "Please retrieve the most relevant document to answer the question.\n" + question
         retrieved_docs = item["retrieved_docs"][:top_k]
+        # retrieved_docs = [item['pos_text']]
         response = vlm.generate(docs=retrieved_docs, question=question, images=None)
         item["response"] = response
         item.pop("neg_text", None)

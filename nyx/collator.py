@@ -49,7 +49,7 @@ class TrainCollator:
             return_tensors="pt", 
             max_length=self.data_args.max_len,
             padding=True,
-            truncation=True
+            truncation=True,
         )
         return inputs
     

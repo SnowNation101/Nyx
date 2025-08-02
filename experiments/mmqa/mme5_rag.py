@@ -29,76 +29,76 @@ os.makedirs(generated_dir, exist_ok=True)
 os.makedirs(index_dir, exist_ok=True)
 
 # ===========embedding===========
-def last_pooling(last_hidden_state, attention_mask, normalize=True):
-    sequence_lengths = attention_mask.sum(dim=1) - 1
-    batch_size = last_hidden_state.shape[0]
-    reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
-    if normalize:
-        reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
-    return reps
+# def last_pooling(last_hidden_state, attention_mask, normalize=True):
+#     sequence_lengths = attention_mask.sum(dim=1) - 1
+#     batch_size = last_hidden_state.shape[0]
+#     reps = last_hidden_state[torch.arange(batch_size, device=last_hidden_state.device), sequence_lengths]
+#     if normalize:
+#         reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
+#     return reps
 
-processor = AutoProcessor.from_pretrained(model_name)
-model = MllamaForConditionalGeneration.from_pretrained(
-    model_name, torch_dtype=torch.bfloat16
-).to("cuda")
-model.eval()
+# processor = AutoProcessor.from_pretrained(model_name)
+# model = MllamaForConditionalGeneration.from_pretrained(
+#     model_name, torch_dtype=torch.bfloat16
+# ).to("cuda")
+# model.eval()
 
-with open(corpus_path, "r") as f:
-    corpus = json.load(f)
+# with open(corpus_path, "r") as f:
+#     corpus = json.load(f)
 
-if not os.path.exists(index_path):
-    embeddings = []
-    for item in tqdm(corpus, desc="Indexing"):
-        text = item['text']
-        if item['image'] != "":
-            image = Image.open(os.path.join("/fs/archive/share/mm_datasets/MMQA/MMQA/final_dataset_images", item['image']))
-            images = [image]
-        else:
-            images = None
-        inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            outputs = last_pooling(
-                model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-                inputs['attention_mask']
-                )
-            embeddings.append(outputs.float().cpu().numpy())
-    embeddings = np.vstack(embeddings).astype("float32")
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
-    faiss.write_index(index, index_path)
-    print(f"Index saved to {index_path}")
-else:
-    index = faiss.read_index(index_path)
-    print(f"Index loaded from {index_path}")
+# if not os.path.exists(index_path):
+#     embeddings = []
+#     for item in tqdm(corpus, desc="Indexing"):
+#         text = item['text']
+#         if item['image'] != "":
+#             image = Image.open(os.path.join("/fs/archive/share/mm_datasets/MMQA/MMQA/final_dataset_images", item['image']))
+#             images = [image]
+#         else:
+#             images = None
+#         inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
+#         with torch.no_grad():
+#             outputs = last_pooling(
+#                 model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+#                 inputs['attention_mask']
+#                 )
+#             embeddings.append(outputs.float().cpu().numpy())
+#     embeddings = np.vstack(embeddings).astype("float32")
+#     index = faiss.IndexFlatIP(embeddings.shape[1])
+#     index.add(embeddings)
+#     faiss.write_index(index, index_path)
+#     print(f"Index saved to {index_path}")
+# else:
+#     index = faiss.read_index(index_path)
+#     print(f"Index loaded from {index_path}")
 
-# ===========retrieving===========
+# # ===========retrieving===========
 
-def retrieve(index, corpus, text, images, top_k=10):
-    inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
-    with torch.no_grad():
-        query_embedding = last_pooling(
-            model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
-            inputs['attention_mask']
-        ).float().cpu().numpy()
-    _, I = index.search(query_embedding, top_k)
-    return [corpus[i] for i in I[0]]
+# def retrieve(index, corpus, text, images, top_k=10):
+#     inputs = processor(text=text, images=images, return_tensors="pt").to("cuda")
+#     with torch.no_grad():
+#         query_embedding = last_pooling(
+#             model(**inputs, return_dict=True, output_hidden_states=True).hidden_states[-1],
+#             inputs['attention_mask']
+#         ).float().cpu().numpy()
+#     _, I = index.search(query_embedding, top_k)
+#     return [corpus[i] for i in I[0]]
 
-with open("/fs/archive/share/mm_datasets/MMQA/MMQA/multimodalqa_final_dataset_pipeline_camera_ready_MMQA_dev.jsonl", "r") as f:
-    dataset = [json.loads(line) for line in f]
+# with open("/fs/archive/share/mm_datasets/MMQA/MMQA/multimodalqa_final_dataset_pipeline_camera_ready_MMQA_dev.jsonl", "r") as f:
+#     dataset = [json.loads(line) for line in f]
 
-for item in tqdm(dataset, desc=f"Retrieving dev set"):
-    question = "Please retrieve the most relevant document to answer the question" + item["question"]
-    item['retrieved_docs'] = retrieve(
-        index=index,
-        corpus=corpus,
-        text=question,
-        images=None,
-        top_k=retrieve_top_k
-    )
+# for item in tqdm(dataset, desc=f"Retrieving dev set"):
+#     question = "Please retrieve the most relevant document to answer the question" + item["question"]
+#     item['retrieved_docs'] = retrieve(
+#         index=index,
+#         corpus=corpus,
+#         text=question,
+#         images=None,
+#         top_k=retrieve_top_k
+#     )
 
-with open(f"{retrieved_dir}/dev_retrieved_docs.json", "w") as f:
-    json.dump(dataset, f, indent=2, ensure_ascii=False)
-print(f"Saved: {retrieved_dir}/dev_retrieved_docs.json")
+# with open(f"{retrieved_dir}/dev_retrieved_docs.json", "w") as f:
+#     json.dump(dataset, f, indent=2, ensure_ascii=False)
+# print(f"Saved: {retrieved_dir}/dev_retrieved_docs.json")
 
 # ===========generating===========
 
@@ -116,7 +116,7 @@ for item in tqdm(dataset, desc="Generating answers for MMQA items"):
         docs.append(doc)
 
     # Prepare the context from retrieved documents
-    images = [Image.open(os.path.join("/fs/archive/share/mm_datasets/MMQA/MMQA/final_dataset_images", doc['image'])) for doc in retrieved_docs[:generate_top_k] if doc['image'] != ""]
+    images = [Image.open(os.path.join("/fs/archive/share/mm_datasets/MMQA/images", doc['image'])) for doc in retrieved_docs[:generate_top_k] if doc['image'] != ""]
     if not images:
         images = None
     
