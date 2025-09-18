@@ -30,6 +30,23 @@ tips: install pytorch -> faiss-cpu -> transformers -> accelerate -> deepspeed
 
 ## Running Scripts
 
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoProcessor
+
+model = AutoModelForCausalLM.from_pretrained(
+    "SnowNation/Nyx-3B-Feedback",
+    dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    device_map="auto",
+)
+processor = AutoProcessor.from_pretrained("SnowNation/Nyx-3B-Feedback")
+
+model.eval()
+```
+
+
 ## Acknowledgements
 
 The core implementation of this project is built upon [VLM2Vec](https://github.com/TIGER-AI-Lab/VLM2Vec). We extend our sincere gratitude to the original authors for their foundational work.

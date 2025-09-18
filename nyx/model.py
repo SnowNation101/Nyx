@@ -179,34 +179,7 @@ class MMEBModel(nn.Module):
 
         checkpoint_path = model_args.checkpoint_path if model_args.checkpoint_path else model_args.model_name
         
-        if model_args.model_backbone == "llava_next":
-            config.use_cache = False
-            config.padding_side = "right"
-            base_model = LlavaNextForConditionalGeneration.from_pretrained(
-                checkpoint_path,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-                trust_remote_code=True
-            )
-            base_model.padding_side = "right"
-        elif model_args.model_backbone == "phi35v":
-            # Loading the base model
-            config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-            config.use_cache = False
-            config.padding_side = "right"
-            config._attn_implementation = "eager"
-            base_model = AutoModelForCausalLM.from_pretrained(model_args.model_name, **hf_kwargs, config=config,
-                                                          torch_dtype=torch.bfloat16, trust_remote_code=True)
-            base_model.padding_side = "right"
-        elif model_args.model_backbone == "mllama":
-            base_model = MllamaForConditionalGeneration.from_pretrained(
-                checkpoint_path, **hf_kwargs, config=config, 
-                attn_implementation="sdpa",
-                torch_dtype=torch.bfloat16, 
-                trust_remote_code=True
-            )
-            base_model.padding_side = "right"
-        elif model_args.model_backbone == "qwen2_5_vl":
+        if model_args.model_backbone == "qwen2_5_vl":
             base_model = Qwen2_5_VLModel.from_pretrained(
                 model_args.model_name, 
                 torch_dtype=torch.bfloat16,

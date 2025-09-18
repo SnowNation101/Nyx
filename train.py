@@ -67,10 +67,7 @@ def main():
 
     train_dataset = TrainDataset(data_args, model_args)
     
-    if 'Llama' in model_args.model_name or model_args.model_backbone == "mllama":
-        collator = LlamaCollator(data_args, processor)
-    else:
-        collator = TrainCollator(data_args, model_args, processor)
+    collator = TrainCollator(processor)
 
     model = MMEBModel.build(model_args, training_args)
     trainer = MMEBTrainer(

@@ -13,10 +13,8 @@ from transformers import HfArgumentParser, AutoProcessor
 from nyx.arguments import ModelArguments, DataArguments, TrainingArguments
 from nyx.model import MMEBModel
 from nyx.dataset import EvalDataset
-from nyx.collator import EvalCollator, LlamaEvalCollator
-from evaluation.eval_utils import get_pred
-from nyx.vlm_backbone.llava_next.processing_llava_next import LlavaNextProcessor
-from nyx.vlm_backbone.phi3_v.processing_phi3_v import Phi3VProcessor
+from nyx.collator import EvalCollator
+from nyx.utils.eval_utils import get_pred
 
 data_group = {
     "IND": ["ImageNet-1K", "N24News", "HatefulMemes", "SUN397", "VOC2007", "InfographicsVQA", "ChartQA", "A-OKVQA", "DocVQA", "OK-VQA", "Visual7W", "VisDial", "CIRR", "NIGHTS", "WebQA", "VisualNews_i2t", "VisualNews_t2i", "MSCOCO_i2t", "MSCOCO_t2i", "MSCOCO"],
@@ -70,39 +68,19 @@ def main():
     print(output_path)
     os.makedirs(output_path, exist_ok=True)
 
-    if model_args.model_backbone == "llava_next":
-        processor = LlavaNextProcessor.from_pretrained(
-            model_args.processor_name if model_args.processor_name else model_args.model_name,
-            trust_remote_code=True)
-    elif model_args.model_backbone == "phi35v":
-        processor = Phi3VProcessor.from_pretrained(
-            model_args.processor_name if model_args.processor_name else model_args.model_name,
-            trust_remote_code=True, num_crops=model_args.num_crops,
-        )
-    else:
-        processor = AutoProcessor.from_pretrained(
-            model_args.processor_name if model_args.processor_name else model_args.model_name,
-            trust_remote_code=True,
-            num_crops=model_args.num_crops,
-        )
+
+    processor = AutoProcessor.from_pretrained(
+        model_args.processor_name if model_args.processor_name else model_args.model_name,
+        trust_remote_code=True,
+        num_crops=model_args.num_crops,
+    )
 
     processor.tokenizer.padding_side = "right"
     model = MMEBModel.load(model_args)
     model.eval()
     model = model.to(training_args.device, dtype=torch.bfloat16)
 
-    if 'Llama' in model_args.model_name or model_args.model_backbone == "mllama":
-        eval_collator = LlamaEvalCollator(
-            data_args=data_args,
-            model_args=model_args,
-            processor=processor,
-        )
-    else:
-        eval_collator = EvalCollator(
-            data_args=data_args,
-            model_args=model_args,
-            processor=processor,
-        )
+    eval_collator = EvalCollator(processor)
 
     # ToDo: This part of code is a little bit hacky. Need to refactor later.
     for idx, subset in enumerate(data_args.subset_name):
