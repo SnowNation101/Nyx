@@ -77,6 +77,6 @@ class EvalCollator:
             images=images if images else None, 
             return_tensors="pt", 
             padding=True,
-            truncation=True,
+            truncation=True
         )
         return inputs

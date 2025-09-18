@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 if [ -z "$MODEL_NAME" ]; then
-    MODEL_NAME="/fs/archive/share/u2024001042/Nyx-3B-Pretrained"
+    MODEL_NAME="/fs/archive/share/u2024001042/Nyx-3B-Feedback"
 fi
 if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="./outputs/eval"
+    OUTPUT_DIR="./outputs/eval_fb"
 fi
 if [ -z "$BATCH_SIZE" ]; then
     BATCH_SIZE=16
@@ -13,7 +13,7 @@ if [ -z "$MODEL_BACKBONE" ]; then
     MODEL_BACKBONE="qwen2_5_vl"
 fi
 
-CUDA_VISIBLE_DEVICES=7 python3 evaluate.py \
+CUDA_VISIBLE_DEVICES=6 python3 evaluate.py \
     --model_name "${MODEL_NAME}" \
     --encode_output_path "${OUTPUT_DIR}" \
     --pooling last --normalize True \

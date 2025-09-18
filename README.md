@@ -12,9 +12,16 @@
 
 </div>
 
-**This project is still under development and is not yet the final release version.**
+This repository contains the official implementation of our paper *"Towards Mixed-Modal Retrieval for Universal Retrieval-Augmented Generation"*.
 
-## Prepare
+
+## Introduction
+We propose **Nyx**, a unified mixed-modal retriever tailored for URAG scenarios, and construct **NyxQA**, a large-scale mixed-modal QA dataset. Our framework includes:  
+- A four-stage automated pipeline for generating realistic multimodal QA pairs.  
+- A two-stage training framework combining pre-training on NyxQA and supervised fine-tuning with VLM feedback.  
+- Strong performance on both text-only RAG benchmarks and vision-language URAG tasks.  
+
+## Preparation
 
 We recommend using **Conda** for package management.
 
@@ -26,25 +33,7 @@ pip install -r requirements.txt
 
 Our implementation uses `torch==2.4.0`, `faiss-cpu==1.8.0`, and `transformers==4.52.2`. Please note that `faiss-cpu` and `transformers` might have `numpy` version conflicts. We prefer keeping `numpy` at version `1.26.4` (the version compatible with `faiss-cpu`), so you may need to uninstall any newer `numpy` versions.
 
-tips: install pytorch -> faiss-cpu -> transformers -> accelerate -> deepspeed
-
-## Running Scripts
-
-
-```python
-import torch
-from transformers import AutoModelForCausalLM, AutoProcessor
-
-model = AutoModelForCausalLM.from_pretrained(
-    "SnowNation/Nyx-3B-Feedback",
-    dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
-    device_map="auto",
-)
-processor = AutoProcessor.from_pretrained("SnowNation/Nyx-3B-Feedback")
-
-model.eval()
-```
+Suggested installation order: PyTorch → faiss-cpu → transformers → accelerate → deepspeed
 
 
 ## Acknowledgements
@@ -57,3 +46,5 @@ We also want to acknowledge and thank the developers of these essential tools th
 - [DeepSpeed](https://github.com/deepspeedai/DeepSpeed) for distributed training acceleration
 
 Our work stands on the shoulders of these remarkable open-source projects and the generous research community.
+
+We also want to note that the logo at the top of this README is adapted from the character **Nyx** in the game *Hades* by Supergiant Games.
