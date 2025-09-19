@@ -10,7 +10,7 @@ from transformers import LlavaNextProcessor
 from transformers.trainer_utils import get_last_checkpoint
 
 from nyx.dataset import TrainDataset
-from nyx.collator import TrainCollator, LlamaCollator
+from nyx.collator import TrainCollator
 from nyx.arguments import ModelArguments, DataArguments, TrainingArguments
 from nyx.model import MMEBModel
 from nyx.trainer import MMEBTrainer
