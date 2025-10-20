@@ -45,3 +45,20 @@ processor.save_pretrained(save_path)
 
 model.push_to_hub("SnowNation/Nyx-3B-Feedback")
 processor.push_to_hub("SnowNation/Nyx-3B-Feedback")
+
+# ------------------------------------------------------------------------------
+
+ckpt_path = "./checkpoint/ft_2025-09-19-1126.05"
+save_path = "./Nyx-3B-MMEB-mmE5"
+
+base_model = Qwen2_5_VLModel.from_pretrained(
+    base_model_path,
+    dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    device_map="auto",
+)
+model = PeftModel.from_pretrained(base_model, ckpt_path, torch_dtype=torch.bfloat16)
+model = model.merge_and_unload()
+
+model.save_pretrained(save_path)
+processor.save_pretrained(save_path)

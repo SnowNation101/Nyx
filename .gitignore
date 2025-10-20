@@ -39,3 +39,7 @@ load_nyx.py
 check_fb.py
 check_token.py
 train2222.sh
+download_mteb.py
+eval_mteb.py
+scripts/evaluate_mme5.sh
+scripts/train_ablation.sh

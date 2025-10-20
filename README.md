@@ -2,15 +2,32 @@
     <img src="https://github.com/SnowNation101/NYX/blob/main/assets/Nyx.webp" alt="Nyx Logo" style="width: 35%;" />
 </div>
 
-<h1 align="center"> 🌓 Nyx: Unified Multimodal Retriever for MRAG </a></h1>
+<h1 align="center"> 🌓 Nyx: Unified Multimodal Retriever for Universal RAG </h1>
 
 <div align="center"> 
+  <a href="https://arxiv.org/" target="_blank">
+    <img alt="Arxiv Paper" src="https://img.shields.io/badge/paper-arXiv-b5212f.svg?logo=arxiv">
+  </a>
+  <a href="https://opensource.org/license/MIT" target="_blank">
+    <img alt="GitHub License" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen">
+  </a>
+  <a href="https://github.com/SnowNation101/NYX" target="_self">
+    <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/SnowNation101/Nyx?style=flat&logo=github&color=lightblue">
+  </a>
+  <a href="https://huggingface.co/collections/SnowNation/nyx-685a63158e4825919b6dd09a" target="_blank">
+    <img alt="Hugging Face Collection" src="https://img.shields.io/badge/%20Hugging%20Face-Nyx%20Collection-yellow.svg?logo=huggingface">
+  </a>
+</div>
 
-<a href="https://arxiv.org/" target="_blank"><img alt="Arxiv Paper" src="https://img.shields.io/badge/paper-arXiv-b5212f.svg?logo=arxiv"></a>
-<a href="https://opensource.org/license/MIT" target="_blank"><img alt="GitHub License" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen"></a>
-<a href="https://github.com/SnowNation101/NYX" target="_self"><img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/SnowNation101/Nyx?style=flat&logo=github&color=lightblue"></a>
+---
+
+<div align="center">
+
+**Authors:**  
+Chenghao Zhang · Guanting Dong · Xinyu Yang · Zhicheng Dou  
 
 </div>
+
 
 This repository contains the official implementation of our paper *"Towards Mixed-Modal Retrieval for Universal Retrieval-Augmented Generation"*.
 
