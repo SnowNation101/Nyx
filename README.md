@@ -5,19 +5,23 @@
 <h1 align="center"> 🌓 Nyx: Unified Multimodal Retriever for Universal RAG </h1>
 
 <div align="center"> 
-  <a href="https://arxiv.org/" target="_blank">
-    <img alt="Arxiv Paper" src="https://img.shields.io/badge/paper-arXiv-b5212f.svg?logo=arxiv">
+  <a href="https://arxiv.org/abs/2510.17354" target="_blank">
+    <img alt="Arxiv Paper" src="https://img.shields.io/badge/arXiv-Paper-b5212f.svg?logo=arxiv">
   </a>
+  
   <a href="https://opensource.org/license/MIT" target="_blank">
-    <img alt="GitHub License" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen">
+    <img alt="LICENSE" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen&label=⚖️%20LICENSE">
   </a>
-  <a href="https://github.com/SnowNation101/NYX" target="_self">
+
+  <a href="https://huggingface.co/collections/SnowNation/nyx-685a63158e4825919b6dd09a" target="_blank">
+    <img alt="Hugging Face Collection" src="https://img.shields.io/badge/%20Hugging%20Face-Collection-yellow.svg?logo=huggingface">
+  </a>
+
+  <a href="https://github.com/SnowNation101/Nyx" target="_self">
     <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/SnowNation101/Nyx?style=flat&logo=github&color=lightblue">
   </a>
-  <a href="https://huggingface.co/collections/SnowNation/nyx-685a63158e4825919b6dd09a" target="_blank">
-    <img alt="Hugging Face Collection" src="https://img.shields.io/badge/%20Hugging%20Face-Nyx%20Collection-yellow.svg?logo=huggingface">
-  </a>
 </div>
+
 
 ---
 
