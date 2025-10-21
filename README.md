@@ -10,7 +10,7 @@
   </a>
   
   <a href="https://opensource.org/license/MIT" target="_blank">
-    <img alt="LICENSE" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen&label=⚖️%20LICENSE">
+    <img alt="GitHub LICENSE" src="https://img.shields.io/github/license/SnowNation101/Nyx?color=lightgreen&logo=open-source-initiative&logoColor=white&label=LICENSE">
   </a>
 
   <a href="https://huggingface.co/collections/SnowNation/nyx-685a63158e4825919b6dd09a" target="_blank">
