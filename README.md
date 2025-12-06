@@ -2,7 +2,7 @@
     <img src="https://github.com/SnowNation101/NYX/blob/main/assets/Nyx.webp" alt="Nyx Logo" style="width: 35%;" />
 </div>
 
-<h1 align="center"> 🌓 Nyx: Unified Multimodal Retriever for Universal RAG </h1>
+<h1 align="center"> 🌓 Nyx: Towards Mixed-Modal Retrieval for Universal Retrieval-Augmented Generation </h1>
 
 <div align="center"> 
   <a href="https://arxiv.org/abs/2510.17354" target="_blank">
@@ -56,12 +56,12 @@ Our implementation uses `torch==2.4.0`, `faiss-cpu==1.8.0`, and `transformers==4
 
 Suggested installation order: PyTorch → faiss-cpu → transformers → accelerate → deepspeed
 
-
 ## Acknowledgements
 
 The core implementation of this project is built upon [VLM2Vec](https://github.com/TIGER-AI-Lab/VLM2Vec). We extend our sincere gratitude to the original authors for their foundational work.
 
 We also want to acknowledge and thank the developers of these essential tools that made our work possible:
+
 - [vLLM](https://github.com/vllm-project/vllm) for efficient LLM inferencing
 - [FlashAttention](https://github.com/Dao-AILab/flash-attention) for optimized attention computation
 - [DeepSpeed](https://github.com/deepspeedai/DeepSpeed) for distributed training acceleration
@@ -69,3 +69,25 @@ We also want to acknowledge and thank the developers of these essential tools th
 Our work stands on the shoulders of these remarkable open-source projects and the generous research community.
 
 We also want to note that the logo at the top of this README is adapted from the character **Nyx** in the game *Hades* by Supergiant Games.
+
+### Citation
+
+```bibtex
+@article{Zhang2025Nyx,
+  author       = {Chenghao Zhang and
+                  Guanting Dong and
+                  Xinyu Yang and
+                  Zhicheng Dou},
+  title        = {Towards Mixed-Modal Retrieval for Universal Retrieval-Augmented Generation},
+  journal      = {CoRR},
+  volume       = {abs/2510.17354},
+  year         = {2025},
+  url          = {https://doi.org/10.48550/arXiv.2510.17354},
+  doi          = {10.48550/ARXIV.2510.17354},
+  eprinttype    = {arXiv},
+  eprint       = {2510.17354},
+  timestamp    = {Sat, 15 Nov 2025 15:31:42 +0100},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2510-17354.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+```
